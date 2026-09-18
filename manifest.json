@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Memoro Web Capture",
+  "version": "1.1",
+  "description": "Right-click or press Option+Shift+M to send web snippets directly to Memoro.",
+  "permissions": ["contextMenus", "activeTab", "scripting"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Memoro Quick Access"
+  },
+  "commands": {
+    "quick-capture": {
+      "suggested_key": {
+        "default": "Alt+Shift+M",
+        "mac": "Alt+Shift+M"
+      },
+      "description": "Capture selected text immediately"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

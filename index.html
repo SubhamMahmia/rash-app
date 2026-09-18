@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Memoro — Personal Memory Layer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <!-- Header & Action Bar -->
+    <header class="header">
+      <div>
+        <h1>MEMORO</h1>
+        <p class="subtitle">Universal Digital Memory Layer</p>
+      </div>
+      <div class="header-actions">
+        <input type="password" id="vault-pin" placeholder="Master PIN (1234)" />
+        <button id="btn-unlock-vault" class="btn secondary">🔓 Unlock Vault</button>
+        <button id="btn-export" class="btn secondary">📦 Export</button>
+        <label for="import-file" class="import-label">📥 Import</label>
+        <input type="file" id="import-file" accept=".json" style="display: none;" />
+        <span id="vault-status" class="badge locked">🔒 Locked</span>
+      </div>
+    </header>
+
+    <!-- Capture Form -->
+    <section class="card">
+      <h2>Capture Form / Note</h2>
+      <form id="capture-form">
+        <div class="field-group">
+          <label for="form-name">Form / Document Title</label>
+          <input type="text" id="form-name" placeholder="e.g., Passport Details or Portal Login" required />
+        </div>
+        <div class="field-group">
+          <label for="form-content">Content / Fields</label>
+          <textarea id="form-content" rows="4" placeholder="Paste or type what you wrote..." required></textarea>
+        </div>
+        <div class="checkbox-group">
+          <input type="checkbox" id="is-sensitive" />
+          <label for="is-sensitive">Locked Vault (Encrypts & restricts search)</label>
+        </div>
+        <button type="submit" class="btn primary">Save to Memory</button>
+      </form>
+    </section>
+
+    <!-- Ask, Don't Search -->
+    <section class="card">
+      <h2>Ask, Don't Search</h2>
+      <p class="section-desc">Ask in plain language to pull the exact answer from your records.</p>
+      <div class="ask-container">
+        <input type="text" id="ask-input" placeholder="e.g., What is my room number?" />
+        <button id="btn-ask" class="btn primary">Ask Memoro</button>
+      </div>
+      <div id="ask-result" class="ask-result hidden">
+        <span class="found-source" id="result-source"></span>
+        <blockquote id="result-answer"></blockquote>
+      </div>
+    </section>
+
+    <!-- Auto Folder Filter Bar -->
+    <div class="folder-bar-container">
+      <span class="folder-bar-title">Topic Folders:</span>
+      <div id="folder-pills" class="folder-pills"></div>
+    </div>
+
+    <!-- Saved Records -->
+    <section class="records-section">
+      <div class="records-header-row">
+        <div class="records-title-group">
+          <h2>Saved Form Folders</h2>
+          <p class="section-desc">One folder per form — existing entries update automatically.</p>
+        </div>
+        <input type="text" id="filter-input" placeholder="🔍 Filter cards..." class="filter-input" />
+      </div>
+      <div id="records-list" class="records-list"></div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

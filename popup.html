@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body {
+      width: 280px;
+      margin: 0;
+      padding: 14px;
+      background: #0b0f19;
+      color: #f3f4f6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #1f2937;
+      padding-bottom: 8px;
+    }
+    .title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+    .status {
+      font-size: 10px;
+      color: #10b981;
+    }
+    .hotkey-tip {
+      font-size: 11px;
+      color: #9ca3af;
+      line-height: 1.4;
+      background: #111827;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #1f2937;
+      margin-bottom: 12px;
+    }
+    kbd {
+      background: #1f2937;
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-size: 10px;
+      color: #fff;
+    }
+    .btn-dashboard {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      background: #4f46e5;
+      color: #fff;
+      text-align: center;
+      text-decoration: none;
+      padding: 8px 0;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .btn-dashboard:hover {
+      background: #4338ca;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span class="title">MEMORO</span>
+    <span class="status">● Connected</span>
+  </div>
+  <div class="hotkey-tip">
+    Highlight any text on a webpage and hit <kbd>⌥ + ⇧ + M</kbd> (or right-click) to capture.
+  </div>
+  <a href="http://localhost:3000" target="_blank" class="btn-dashboard">Open Dashboard ↗</a>
+</body>
+</html>
