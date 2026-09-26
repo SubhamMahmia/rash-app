@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "rash": {
+      "url": "http://localhost:3001/sse"
+    }
+  }
+}

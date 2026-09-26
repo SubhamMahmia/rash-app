@@ -1,0 +1,13 @@
+vault.key
+vault.pin
+rash.db
+rash.db-shm
+rash.db-wal
+rash.db.backup
+gmail-credentials.json
+gmail-token.json
+rash-attachments/
+tessdata/
+digest-settings.json
+gmail-smtp-credentials.json
+autofill-profile.json

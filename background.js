@@ -1,14 +1,14 @@
 // Setup context menu on installation
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
-    id: 'save-to-memoro',
-    title: '💾 Save selection to Memoro',
+    id: 'save-to-rash',
+    title: '💾 Save selection to RaSh',
     contexts: ['selection']
   });
 });
 
-// Helper function to send memory payload to Memoro server
-async function sendToMemoro(tabTitle, text) {
+// Helper function to send memory payload to RaSh server
+async function sendToRaSh(tabTitle, text) {
   try {
     const res = await fetch('http://localhost:3000/api/records', {
       method: 'POST',
@@ -21,15 +21,15 @@ async function sendToMemoro(tabTitle, text) {
     });
     return res.ok;
   } catch (err) {
-    console.error('Memoro capture error:', err);
+    console.error('RaSh capture error:', err);
     return false;
   }
 }
 
 // Right-click context menu handler
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === 'save-to-memoro' && info.selectionText) {
-    sendToMemoro(tab.title || 'Untitled Web Note', info.selectionText);
+  if (info.menuItemId === 'save-to-rash' && info.selectionText) {
+    sendToRaSh(tab.title || 'Untitled Web Note', info.selectionText);
   }
 });
 
@@ -47,7 +47,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 
       const selectedText = results?.[0]?.result;
       if (selectedText && selectedText.trim()) {
-        await sendToMemoro(tab.title || 'Untitled Web Note', selectedText);
+        await sendToRaSh(tab.title || 'Untitled Web Note', selectedText);
       }
     } catch (e) {
       console.warn('Cannot inject into this page:', e);

@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "Memoro Web Capture",
+  "name": "RaSh Web Capture",
   "version": "1.1",
-  "description": "Right-click or press Option+Shift+M to send web snippets directly to Memoro.",
+  "description": "Right-click or press Option+Shift+M to send web snippets directly to RaSh.",
   "permissions": ["contextMenus", "activeTab", "scripting"],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Memoro Quick Access"
+    "default_title": "RaSh Quick Access"
   },
   "commands": {
     "quick-capture": {

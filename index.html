@@ -3,79 +3,793 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Memoro — Personal Memory Layer</title>
+  <title>RaSh — Sovereign Cognitive Architecture</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="container">
-    <!-- Header & Action Bar -->
-    <header class="header">
-      <div>
-        <h1>MEMORO</h1>
-        <p class="subtitle">Universal Digital Memory Layer</p>
+
+  <!-- Cinematic Boot Loader: Aegis Node Core -->
+  <div id="startup-loader" class="startup-loader">
+    <div class="boot-loader-wrapper">
+      <svg class="rash-pro-logo lg boot-pulse" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="premiumGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#e2e8f0" />
+            <stop offset="100%" stop-color="#6366f1" />
+          </linearGradient>
+          <filter id="premiumGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+        </defs>
+        <rect width="100" height="100" rx="22" fill="#050505" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+        <path d="M 50 25 L 75 40 V 70 L 50 85 L 25 70 V 40 Z" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="2"/>
+        <path d="M 50 25 L 75 40 L 50 55 L 25 40 Z" fill="rgba(99, 102, 241, 0.08)" stroke="url(#premiumGrad)" stroke-width="3" stroke-linejoin="round" filter="url(#premiumGlow)"/>
+        <path d="M 50 55 V 85" stroke="url(#premiumGrad)" stroke-width="3" stroke-linecap="round" filter="url(#premiumGlow)"/>
+        <path d="M 25 40 L 50 55 M 75 40 L 50 55" stroke="url(#premiumGrad)" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+      <div class="boot-status-text">
+        <span class="boot-dot"></span> INITIALIZING AIR-GAPPED KERNEL...
       </div>
-      <div class="header-actions">
-        <input type="password" id="vault-pin" placeholder="Master PIN (1234)" />
-        <button id="btn-unlock-vault" class="btn secondary">🔓 Unlock Vault</button>
-        <button id="btn-export" class="btn secondary">📦 Export</button>
-        <label for="import-file" class="import-label">📥 Import</label>
-        <input type="file" id="import-file" accept=".json" style="display: none;" />
-        <span id="vault-status" class="badge locked">🔒 Locked</span>
+    </div>
+  </div>
+
+  <!-- Real-time Fast WebGL Neural Canvas -->
+  <canvas id="neural-canvas"></canvas>
+
+  <div class="canvas-grid-pattern"></div>
+  <div class="fog-vignette"></div>
+
+  <!-- X-Ray Mode Blueprint Telemetry HUD -->
+  <div id="xray-hud" class="xray-hud-overlay hidden">
+    <div class="xray-hud-panel top-left">
+      <div class="hud-label">AIR-GAP PROTOCOL</div>
+      <div class="hud-val green">SOCKET: 127.0.0.1:11434 (STRICT LOCAL)</div>
+      <div class="hud-val">OUTBOUND TRAFFIC: 0 BYTES / SEC (LOCKED)</div>
+    </div>
+    <div class="xray-hud-panel top-right">
+      <div class="hud-label">STORAGE BUS</div>
+      <div class="hud-val">ENGINE: BETTER-SQLITE3 WAL MODE</div>
+      <div class="hud-val green">ATOMIC COMMITS: ACTIVE</div>
+    </div>
+    <div class="xray-hud-panel bottom-left">
+      <div class="hud-label">INFERENCE MATRIX</div>
+      <div class="hud-val">RUNTIME: OLLAMA 3.2:1B QUANTIZED</div>
+      <div class="hud-val green">VRAM LEAK CHECK: 0.00%</div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- GLOBAL DRAG-AND-DROP DROPZONE OVERLAY                    -->
+  <!-- ======================================================== -->
+  <div id="dropzone-overlay" class="dropzone-overlay hidden">
+    <div class="dropzone-inner">
+      <div class="dropzone-icon">
+        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+      </div>
+      <div class="dropzone-title">Drop to ingest into RaSh</div>
+      <div class="dropzone-sub">TXT · PDF · MD · JSON — indexed locally, instantly</div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- RAYCAST-STYLE COMMAND PALETTE                            -->
+  <!-- ======================================================== -->
+  <div id="cmd-palette-backdrop" class="cmd-palette-backdrop hidden">
+    <div id="cmd-palette" class="cmd-palette" role="dialog" aria-modal="true" aria-label="Command Palette">
+      <div class="cmd-palette-search-row">
+        <svg class="cmd-palette-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <input type="text" id="cmd-palette-input" placeholder="Search memories or ask a question..." autocomplete="off" spellcheck="false" />
+        <kbd class="cmd-palette-esc">ESC</kbd>
+      </div>
+
+      <!-- Shimmer skeleton shown while loading -->
+      <div id="cmd-palette-skeleton" class="cmd-palette-skeleton">
+        <div class="skeleton-group-label shimmer-bar" style="width:80px; height:10px; margin-bottom:10px;"></div>
+        <div class="skeleton-item">
+          <div class="shimmer-bar" style="width:60%; height:14px;"></div>
+          <div class="shimmer-bar" style="width:35%; height:10px; margin-top:6px;"></div>
+        </div>
+        <div class="skeleton-item">
+          <div class="shimmer-bar" style="width:75%; height:14px;"></div>
+          <div class="shimmer-bar" style="width:45%; height:10px; margin-top:6px;"></div>
+        </div>
+        <div class="skeleton-item">
+          <div class="shimmer-bar" style="width:50%; height:14px;"></div>
+          <div class="shimmer-bar" style="width:30%; height:10px; margin-top:6px;"></div>
+        </div>
+      </div>
+
+      <div id="cmd-palette-results" class="cmd-palette-results hidden"></div>
+
+      <div class="cmd-palette-footer">
+        <span><kbd>↑↓</kbd> navigate</span>
+        <span><kbd>↵</kbd> open</span>
+        <span><kbd>ESC</kbd> close</span>
+        <span class="cmd-palette-footer-right">
+          <span class="cmd-palette-dot emerald"></span>RaSh Local Engine
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- VIEW 1: PUBLIC LANDING PAGE (CINEMATIC LONG-SCROLL)      -->
+  <!-- ======================================================== -->
+  <div id="view-landing" class="view-section">
+
+    <!-- Floating Navigation Deck -->
+    <header class="floating-nav scroll-fade">
+      <div class="nav-cluster-left">
+        <svg class="rash-pro-logo sm" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <rect width="100" height="100" rx="22" fill="#050505" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+          <path d="M 50 25 L 75 40 V 70 L 50 85 L 25 70 V 40 Z" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="2"/>
+          <path d="M 50 25 L 75 40 L 50 55 L 25 40 Z" fill="rgba(99, 102, 241, 0.08)" stroke="url(#premiumGrad)" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M 50 55 V 85" stroke="url(#premiumGrad)" stroke-width="3" stroke-linecap="round"/>
+          <path d="M 25 40 L 50 55 M 75 40 L 50 55" stroke="url(#premiumGrad)" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <span class="brand-title-hero">RaSh</span>
+      </div>
+
+      <nav class="nav-links-center">
+        <a href="#engine" class="nav-anchor">Engine</a>
+        <a href="#pipeline" class="nav-anchor">Pipeline</a>
+        <a href="#use-cases" class="nav-anchor">Roles</a>
+        <a href="#compare" class="nav-anchor">Comparison</a>
+        <a href="#faq" class="nav-anchor">FAQ</a>
+      </nav>
+
+      <div class="nav-cluster-right">
+        <button id="btn-xray-toggle" class="nav-btn-xray" title="Toggle X-Ray Local Architecture Blueprint">
+          <span class="xray-pulse"></span>
+          <span class="xray-text">X-RAY DEV</span>
+        </button>
+        <button id="btn-open-login" class="nav-btn-secondary">Sign In</button>
+        <button id="btn-open-signup" class="nav-btn-primary magnetic-btn">
+          <span>Get Started</span>
+          <span class="btn-sparkle">✦</span>
+        </button>
       </div>
     </header>
 
-    <!-- Capture Form -->
-    <section class="card">
-      <h2>Capture Form / Note</h2>
-      <form id="capture-form">
-        <div class="field-group">
-          <label for="form-name">Form / Document Title</label>
-          <input type="text" id="form-name" placeholder="e.g., Passport Details or Portal Login" required />
+    <!-- 1. 3D Hero Stage with Parallax Shards -->
+    <section class="hero-stage scroll-reveal">
+      <div id="parallax-shards" class="hero-shards-layer">
+        <div class="data-shard shard-1"><code>[RASH] ENCRYPTED_WAL</code></div>
+        <div class="data-shard shard-2"><code>MEM_NODE_405_LIVE</code></div>
+        <div class="data-shard shard-3"><code>DOM_READ: TRUE</code></div>
+        <div class="data-shard shard-4"><code>OLLAMA_3.2_OFFLINE</code></div>
+      </div>
+
+      <div class="hero-capsule-badge">
+        <span class="pulse-beacon emerald"></span>
+        <span class="badge-text">100% AIR-GAPPED • LOCAL RUNTIME</span>
+      </div>
+
+      <h1 class="hero-monument-title">
+        The Autonomous Memory <br />
+        <span class="text-laser-gradient">Built for Absolute Sovereignty.</span>
+      </h1>
+
+      <p class="hero-monument-subtext">
+        RaSh continuously indexes what you read, search, and work on through pure text streams. No cloud leaks. Zero screenshots. Decoded entirely on-device with local Ollama AI.
+      </p>
+
+      <div class="hero-action-matrix">
+        <button id="btn-hero-cta" class="btn-laser-stage magnetic-btn">
+          <span class="laser-track"></span>
+          <span class="btn-label-text">Open Your Memory Space →</span>
+        </button>
+      </div>
+
+      <!-- 3D Interactive Perspective Hero Card -->
+      <div class="stage-3d-wrapper" id="hero-3d-stage">
+        <div class="card-3d-slab" id="hero-3d-card">
+          <div class="card-laser-rim"></div>
+          <div class="slab-specular-flare"></div>
+          <div class="slab-header">
+            <div class="mac-dots">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+            </div>
+            <div class="slab-telemetry">
+              <span class="telemetry-pill">HOST: 127.0.0.1</span>
+              <span class="telemetry-pill">LLM: OLLAMA 3.2:1B</span>
+            </div>
+          </div>
+          <div class="slab-terminal-body">
+            <div class="terminal-query-row">
+              <span class="terminal-prompt-caret">✦</span>
+              <span class="terminal-query-string" id="typewriter-text"></span><span id="prompt-cursor" class="cursor-blink">_</span>
+            </div>
+            <div class="terminal-synthesis-node" id="hero-synthesis">
+              <div class="synthesis-badge">
+                <span class="chip-dot"></span>
+                <span>RaSh's Answer</span>
+              </div>
+              <div class="synthesis-text">
+                <span id="hero-answer-text"></span><span id="answer-cursor" class="cursor-blink hidden">_</span>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="field-group">
-          <label for="form-content">Content / Fields</label>
-          <textarea id="form-content" rows="4" placeholder="Paste or type what you wrote..." required></textarea>
+      </div>
+    </section>
+
+    <!-- 2. Infinite Trust Marquee -->
+    <section class="trust-marquee scroll-reveal">
+      <div class="marquee-track">
+        <span class="marquee-item">ZERO SCREENSHOTS</span><span class="marquee-star">✦</span>
+        <span class="marquee-item">SQLITE WAL STORAGE</span><span class="marquee-star">✦</span>
+        <span class="marquee-item">PURE DOM EXTRACTION</span><span class="marquee-star">✦</span>
+        <span class="marquee-item">LOCAL OLLAMA RUNTIME</span><span class="marquee-star">✦</span>
+        <span class="marquee-item">END-TO-END ENCRYPTED</span><span class="marquee-star">✦</span>
+        <span class="marquee-item">NO CLOUD SUBSCRIPTIONS</span><span class="marquee-star">✦</span>
+        <span class="marquee-item">ZERO SCREENSHOTS</span><span class="marquee-star">✦</span>
+        <span class="marquee-item">SQLITE WAL STORAGE</span><span class="marquee-star">✦</span>
+        <span class="marquee-item">PURE DOM EXTRACTION</span><span class="marquee-star">✦</span>
+        <span class="marquee-item">LOCAL OLLAMA RUNTIME</span><span class="marquee-star">✦</span>
+      </div>
+    </section>
+
+    <!-- 3. Bento Box Feature Grid -->
+    <section id="engine" class="bento-section scroll-reveal">
+      <div class="section-tracer-tag">THE COGNITIVE ENGINE</div>
+      <h2 class="section-monument-head">Unprecedented scale. Uncompromising privacy.</h2>
+      
+      <div class="bento-grid">
+        <div class="bento-card span-2 tilt-fx">
+          <div class="bento-glow cyan"></div>
+          <div class="bento-content">
+            <h3>Natural Language Retrieval</h3>
+            <p>Stop searching for keywords. Ask questions the way you think, and let local AI synthesize exact answers from your indexed history.</p>
+            <div class="bento-visual mock-search">
+              <span class="badge-shortcut">⌘K</span>
+              <span>"What did Shagun say about the project timeline?"</span>
+            </div>
+          </div>
         </div>
-        <div class="checkbox-group">
-          <input type="checkbox" id="is-sensitive" />
-          <label for="is-sensitive">Locked Vault (Encrypts & restricts search)</label>
+
+        <div class="bento-card span-1 tilt-fx">
+          <div class="bento-glow rose"></div>
+          <div class="bento-content">
+            <h3>Secret Vault</h3>
+            <p>Lock credentials and financial data behind a hardware Master PIN. Invisible to default search.</p>
+            <div class="bento-visual flex-center">
+              <span class="giant-icon">🔒</span>
+            </div>
+          </div>
         </div>
-        <button type="submit" class="btn primary">Save to Memory</button>
+
+        <div class="bento-card span-1 tilt-fx">
+          <div class="bento-glow indigo"></div>
+          <div class="bento-content">
+            <h3>Local Reasoning</h3>
+            <p>Powered by Llama 3.2 on Ollama. Runs natively on your GPU/CPU without ever pinging external APIs.</p>
+            <div class="bento-visual flex-center">
+              <div class="pulse-ring-bento"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bento-card span-2 tilt-fx">
+          <div class="bento-glow emerald"></div>
+          <div class="bento-content">
+            <h3>Zero Screen Recording</h3>
+            <p>We believe recording your pixels is a massive security flaw. RaSh decodes pure DOM text and local file byte-streams. Milliseconds to process, kilobytes to store.</p>
+            <div class="bento-visual mock-terminal">
+              <code>> reading document.body.innerText...</code>
+              <code>> [SUCCESS] 4,203 characters saved.</code>
+              <code class="green">> 0 screen captures taken. Zero privacy leaks.</code>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Architecture Pipeline -->
+    <section id="pipeline" class="pipeline-section scroll-reveal">
+      <div class="section-tracer-tag center">ARCHITECTURE PIPELINE</div>
+      <h2 class="section-monument-head center">How RaSh Augments Your Mind</h2>
+      
+      <div class="pipeline-grid">
+        <div class="pipeline-line"></div>
+        <div class="pipeline-step tilt-fx">
+          <div class="step-number">01</div>
+          <h3>Ambient Capture</h3>
+          <p>Text is silently extracted from your browser DOM or dropped files into your <code>inbox/</code> directory. No images, no video recording, zero disk clutter.</p>
+        </div>
+        <div class="pipeline-step tilt-fx">
+          <div class="step-number">02</div>
+          <h3>Atomic Storage</h3>
+          <p>Data is instantly written to a local SQLite WAL database on your SSD. Fully encrypted. Fully crash-proof.</p>
+        </div>
+        <div class="pipeline-step tilt-fx">
+          <div class="step-number">03</div>
+          <h3>Neural Synthesis</h3>
+          <p>When you ask a question, Ollama cross-references your database and generates an instant factual answer with citations.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Cognitive Profiles & High-Intelligence Role Simulator -->
+    <section id="use-cases" class="use-cases-section scroll-reveal">
+      <div class="section-tracer-tag center">BUILT FOR VISIONARIES</div>
+      <h2 class="section-monument-head center">Amplify your cognitive bandwidth.</h2>
+      
+      <div class="cases-grid">
+        <div class="case-card tilt-fx">
+          <div class="case-icon">💡</div>
+          <h3>For Founders</h3>
+          <p>Instantly recall pitch deck metrics, investor feedback, and meeting notes without digging through Google Docs.</p>
+        </div>
+        <div class="case-card tilt-fx">
+          <div class="case-icon">⚡</div>
+          <h3>For Engineers</h3>
+          <p>Never lose a terminal command, database config, or API snippet. Search your entire technical history by context.</p>
+        </div>
+        <div class="case-card tilt-fx">
+          <div class="case-icon">🔬</div>
+          <h3>For Researchers</h3>
+          <p>Index thousands of PDF abstracts locally. Ask your AI to summarize core findings instantly.</p>
+        </div>
+      </div>
+
+      <!-- Maximum Intelligence Procedural Role Simulator -->
+      <div class="role-simulator tilt-fx scroll-reveal">
+        <div class="simulator-inner">
+          <div class="simulator-badge">NEURAL WORKFLOW HEURISTIC</div>
+          <h3>Enter Any Profession, Job, or Business</h3>
+          <p>See exactly how RaSh's local cognitive architecture adapts to your exact daily responsibilities.</p>
+          
+          <div class="role-border-beam-wrapper">
+            <div class="role-border-beam-glow"></div>
+            <div class="role-input-box">
+              <input type="text" id="role-input" placeholder="e.g., CA, Cafe Owner, Aerospace Engineer, Doctor..." autocomplete="off" />
+              <button id="btn-simulate-role" class="btn-laser-compact magnetic-btn">Simulate Workflow →</button>
+            </div>
+          </div>
+
+          <div class="role-terminal hidden" id="role-terminal">
+            <div class="terminal-bar">
+              <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+              <span class="term-title">rash-chain-of-thought-engine • localhost</span>
+            </div>
+            
+            <div class="role-terminal-body">
+              <div id="role-cot-steps" class="cot-steps-rail"></div>
+              <div id="role-final-output" class="role-final-output hidden">
+                <div class="synthesis-badge">
+                  <span class="chip-dot"></span>
+                  <span>Bespoke Cognitive Strategy</span>
+                </div>
+                <div class="role-output-text-wrap">
+                  <span class="terminal-prompt-caret">✦</span>
+                  <span id="role-output-text"></span><span class="cursor-blink">_</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. The Manifesto & Hardware Metrics -->
+    <section id="manifesto" class="manifesto-section scroll-reveal">
+      <div class="manifesto-content">
+        <h2 class="manifesto-text">We don't want your data. <br/> <span class="text-laser-gradient">Period.</span></h2>
+        <p>In an era where every cloud provider trains models on your private life, RaSh stands as an air-gapped fortress. No telemetry. No hidden APIs. What happens on your machine stays on your machine.</p>
+      </div>
+    </section>
+
+    <section class="metrics-section scroll-reveal">
+      <div class="metrics-grid">
+        <div class="metric-card tilt-fx">
+          <div class="metric-value">< 15<span class="metric-unit">ms</span></div>
+          <div class="metric-label">Local Query Latency</div>
+        </div>
+        <div class="metric-card tilt-fx">
+          <div class="metric-value">100<span class="metric-unit">%</span></div>
+          <div class="metric-label">Cloud Independence</div>
+        </div>
+        <div class="metric-card tilt-fx">
+          <div class="metric-value">~1.2<span class="metric-unit">GB</span></div>
+          <div class="metric-label">VRAM Footprint</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. Local vs Cloud & Legacy Screen Loggers -->
+    <section id="compare" class="compare-section scroll-reveal">
+      <div class="section-tracer-tag center">CLEAR COMPARISON</div>
+      <h2 class="section-monument-head center">Why RaSh is Built Different</h2>
+      
+      <div class="compare-table-wrap">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>What Matters</th>
+              <th class="col-rash"><span class="rash-highlight">RaSh (Silent Text Memory)</span></th>
+              <th>Screen Recorders (e.g. Recall)</th>
+              <th>Cloud AI Chatbots</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>How it captures info</strong></td>
+              <td class="col-rash">Reads text silently in the background</td>
+              <td class="legacy-dim">Takes heavy screenshots every 5 seconds</td>
+              <td class="legacy-dim">You must copy-paste everything manually</td>
+            </tr>
+            <tr>
+              <td><strong>Where it is stored</strong></td>
+              <td class="col-rash">Crash-proof local folder on your computer</td>
+              <td class="legacy-dim">Unprotected plain files on disk</td>
+              <td class="legacy-dim">Saved on company cloud servers</td>
+            </tr>
+            <tr>
+              <td><strong>Disk Space Needed</strong></td>
+              <td class="col-rash">Barely 500 KB a day (Pure text)</td>
+              <td class="legacy-dim">25+ GB of heavy images every month</td>
+              <td class="legacy-dim">Expensive cloud subscriptions</td>
+            </tr>
+            <tr>
+              <td><strong>Search Speed</strong></td>
+              <td class="col-rash">Instant (< 15ms) on your device</td>
+              <td class="legacy-dim">Slowed down by image reading errors</td>
+              <td class="legacy-dim">2 to 3 seconds waiting on internet</td>
+            </tr>
+            <tr>
+              <td><strong>Privacy & Leaks</strong></td>
+              <td class="col-rash">100% Private, zero cloud, zero leaks</td>
+              <td class="legacy-dim">Risk of screen leaks and password grabs</td>
+              <td class="legacy-dim">Used to train external public models</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 8. Interactive Technical FAQ Accordion -->
+    <section id="faq" class="faq-section scroll-reveal">
+      <div class="section-tracer-tag center">KNOWLEDGE BASE</div>
+      <h2 class="section-monument-head center">Frequently Asked Questions</h2>
+      
+      <div class="faq-grid">
+        <div class="faq-item">
+          <button class="faq-question">Will running local AI slow down my computer? <span class="faq-icon">+</span></button>
+          <div class="faq-answer"><p>No. RaSh utilizes highly quantized local models on Ollama (Llama 3.2:1B) that consume roughly ~1.2GB of VRAM. It idles silently in the background and only uses compute during active queries.</p></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-question">Why use pure text reading instead of taking screenshots? <span class="faq-icon">+</span></button>
+          <div class="faq-answer"><p>Taking constant screenshots is a privacy hazard and fills your hard drive with gigabytes of images. Optical character recognition (OCR) also makes mistakes on tables and codes. RaSh reads clean text, taking milliseconds to process and zero storage bloat.</p></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-question">How do you guarantee my data never touches the cloud? <span class="faq-icon">+</span></button>
+          <div class="faq-answer"><p>RaSh is completely air-gapped. There are no AWS servers, no telemetry trackers, and no external API keys. Your memory database is stored strictly in a local SQLite file on your own SSD.</p></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-question">What happens if my machine crashes? Is my memory lost? <span class="faq-icon">+</span></button>
+          <div class="faq-answer"><p>RaSh uses SQLite in WAL (Write-Ahead Logging) mode. This provides crash-proof storage, meaning every memory node is saved atomically. Even during power failures, your database resists corruption.</p></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-question">Do I have total control to delete or export my memories? <span class="faq-icon">+</span></button>
+          <div class="faq-answer"><p>Yes. You can instantly export your entire database as a single backup JSON file, or permanently delete individual nodes with a single click. When you delete, it is erased immediately.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9. Final Monumental CTA -->
+    <section class="final-cta-section scroll-reveal">
+      <div class="cta-backdrop-glow"></div>
+      <h2>Ready to augment your mind?</h2>
+      <p>Initialize your local memory node in seconds. No credit card. No cloud required.</p>
+      <button class="btn-laser-stage magnetic-btn" onclick="document.getElementById('btn-open-signup').click()">
+        <span class="laser-track"></span>
+        <span class="btn-label-text">Initialize Workspace Now</span>
+      </button>
+    </section>
+
+    <footer class="monument-footer">
+      <p>© 2026 RaSh Core Systems. Crafted for absolute digital sovereignty.</p>
+    </footer>
+
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- VIEW 2: AUTHENTICATION MODAL                             -->
+  <!-- ======================================================== -->
+  <div id="modal-auth" class="auth-backdrop hidden">
+    <div class="auth-slab">
+      <div class="auth-slab-laser"></div>
+      <div class="auth-top">
+        <div class="auth-brand-block">
+          <span class="auth-star">✦</span>
+          <h3 id="auth-modal-title">Sign In to RaSh</h3>
+        </div>
+        <button id="btn-close-auth" class="btn-cross-close">✕</button>
+      </div>
+
+      <form id="form-auth" class="auth-form-body">
+        <p id="auth-modal-desc" class="auth-explainer">Enter your local workspace credentials to access your personal memory database.</p>
+        <div class="input-stack">
+          <label for="auth-email">Workspace ID</label>
+          <input type="text" id="auth-email" placeholder="e.g., rangesh" required autocomplete="username" />
+        </div>
+        <div class="input-stack">
+          <label for="auth-password">Security Passkey</label>
+          <input type="password" id="auth-password" placeholder="••••••••" required autocomplete="current-password" />
+        </div>
+        <div class="auth-actions-row">
+          <button type="button" id="btn-switch-auth-mode" class="auth-mode-link">Need an account? Sign up</button>
+          <button type="submit" class="btn-laser-compact magnetic-btn" id="btn-auth-submit">Enter Workspace →</button>
+        </div>
       </form>
-    </section>
+    </div>
+  </div>
 
-    <!-- Ask, Don't Search -->
-    <section class="card">
-      <h2>Ask, Don't Search</h2>
-      <p class="section-desc">Ask in plain language to pull the exact answer from your records.</p>
-      <div class="ask-container">
-        <input type="text" id="ask-input" placeholder="e.g., What is my room number?" />
-        <button id="btn-ask" class="btn primary">Ask Memoro</button>
+  <!-- ======================================================== -->
+  <!-- VIEW 3: PERSONAL WORKSPACE DASHBOARD                     -->
+  <!-- ======================================================== -->
+  <div id="view-app" class="view-section hidden">
+    
+    <!-- Living Telemetry Ribbon -->
+    <div class="app-telemetry-ribbon">
+      <div class="telemetry-ribbon-content">
+        <div class="telemetry-status-unit">
+          <span class="beacon-circle emerald"></span>
+          <span>AIR-GAPPED RUNTIME: <strong>OLLAMA 3.2:1B (OFFLINE)</strong></span>
+        </div>
+        <div class="telemetry-bar-sep">/</div>
+        <div class="telemetry-status-unit">
+          <span class="telemetry-star-icon">✦</span>
+          <span>VRAM: <strong id="telemetry-vram">1.18 GB</strong></span>
+        </div>
+        <div class="telemetry-bar-sep">/</div>
+        <div class="telemetry-status-unit">
+          <span class="telemetry-star-icon">◈</span>
+          <span>LATENCY: <strong id="telemetry-latency">12ms</strong></span>
+        </div>
+        <div class="telemetry-bar-sep">/</div>
+        <div class="telemetry-status-unit">
+          <span class="telemetry-star-icon">⟳</span>
+          <span>SOCKET: <strong id="telemetry-socket">127.0.0.1:11434</strong></span>
+        </div>
+        <div class="telemetry-bar-sep">/</div>
+        <div class="telemetry-status-unit">
+          <span class="telemetry-star-icon">✦</span>
+          <span>SOVEREIGN ARCHITECTURE: <strong>ZERO SCREENSHOTS • DOM ONLY</strong></span>
+        </div>
       </div>
-      <div id="ask-result" class="ask-result hidden">
-        <span class="found-source" id="result-source"></span>
-        <blockquote id="result-answer"></blockquote>
-      </div>
-    </section>
-
-    <!-- Auto Folder Filter Bar -->
-    <div class="folder-bar-container">
-      <span class="folder-bar-title">Topic Folders:</span>
-      <div id="folder-pills" class="folder-pills"></div>
     </div>
 
-    <!-- Saved Records -->
-    <section class="records-section">
-      <div class="records-header-row">
-        <div class="records-title-group">
-          <h2>Saved Form Folders</h2>
-          <p class="section-desc">One folder per form — existing entries update automatically.</p>
+    <header class="app-command-header">
+      <div class="command-brand-wrap">
+        <svg class="rash-pro-logo sm" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <rect width="100" height="100" rx="22" fill="#050505" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+          <path d="M 50 25 L 75 40 V 70 L 50 85 L 25 70 V 40 Z" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="2"/>
+          <path d="M 50 25 L 75 40 L 50 55 L 25 40 Z" fill="rgba(99, 102, 241, 0.08)" stroke="url(#premiumGrad)" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M 50 55 V 85" stroke="url(#premiumGrad)" stroke-width="3" stroke-linecap="round"/>
+          <path d="M 25 40 L 50 55 M 75 40 L 50 55" stroke="url(#premiumGrad)" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <div class="command-brand-titles">
+          <div class="command-brand-name">
+            <span>RaSh</span>
+            <div class="command-live-chip">
+              <span class="live-dot"></span>WORKSPACE ACTIVE
+            </div>
+          </div>
+          <span class="command-subtext" id="user-welcome-label">Continuous ambient memory online.</span>
         </div>
-        <input type="text" id="filter-input" placeholder="🔍 Filter cards..." class="filter-input" />
       </div>
-      <div id="records-list" class="records-list"></div>
-    </section>
+      <div class="command-header-actions">
+        <div class="live-counter-capsule">
+          <span class="capsule-sub">SAVED MEMORIES</span>
+          <span class="capsule-main" id="memory-count">0</span>
+        </div>
+        <button id="btn-vault-toggle" class="btn-glass-vault magnetic-btn"><span id="vault-icon">🔒</span><span id="vault-label">Secret Vault</span></button>
+        <button id="btn-new-memory" class="btn-laser-compact magnetic-btn"><span class="plus-sign">+</span> Add Memory</button>
+        <div class="dock-utility-buttons">
+          <button id="btn-export" class="dock-util-btn">Backup</button>
+          <label class="dock-util-btn">Restore<input type="file" id="file-import" accept=".json" style="display:none;" /></label>
+          <button id="btn-signout" class="dock-util-btn">Sign Out</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="cmd-k-backdrop" class="cmd-k-backdrop"></div>
+
+    <main class="app-workspace-body">
+      <!-- Search Bar -->
+      <section class="search-command-zone" id="global-search-zone">
+        <div class="search-command-zone-wrapper">
+          <div class="search-laser-container" id="search-card">
+            <div class="search-glow-layer"></div>
+            <div class="search-input-inner">
+              <div class="search-lens-optic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></div>
+              <input type="text" id="input-ask" placeholder="Ask RaSh anything you remember reading, chatting, or saving... (⌘K)" autocomplete="off" spellcheck="false" />
+              
+              <button id="btn-mic" class="btn-mic magnetic-btn" title="Voice Input">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                  <line x1="12" y1="19" x2="12" y2="22"></line>
+                </svg>
+              </button>
+
+              <div class="search-action-dock">
+                <span class="key-indicator">⌘K</span>
+                <button id="btn-ask-submit" class="btn-ask-laser magnetic-btn"><span>Ask RaSh</span><span class="btn-laser-arrow">→</span></button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Drawer moved outside to prevent shrinking -->
+          <div id="ask-response-box" class="synthesized-drawer hidden">
+            <div class="drawer-topbar">
+              <div class="drawer-title-chip"><span class="pulsing-core"></span><span>RaSh's Answer</span></div>
+              <button id="btn-close-ask" class="btn-cross-close">✕</button>
+            </div>
+            <div id="ask-answer-text" class="drawer-response-text"></div>
+            <div class="drawer-bottom-bar"><div id="ask-source-meta" class="drawer-source-stamp"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="topic-matrix-zone">
+        <div class="matrix-left-rail">
+          <span class="matrix-heading">TOPICS</span>
+          <div class="pills-track" id="category-pills"><button class="pill active" data-category="All">All Memories</button></div>
+        </div>
+        <div class="matrix-right-rail">
+          <div class="filter-search-box">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="input-search" placeholder="Type to filter..." />
+          </div>
+          <button id="btn-auto-sort" class="btn-organize-ai magnetic-btn">⚡ Auto-Organize</button>
+        </div>
+      </section>
+
+      <section id="cards-grid" class="memory-grid-canvas"></section>
+      
+      <div id="empty-state" class="empty-state-viewport hidden">
+        <div class="empty-radar-optic"><div class="radar-scan-ring"></div><div class="radar-core-symbol">🗂️</div></div>
+        <h3>No Memories Recorded</h3>
+        <p>Drop a document into your <code>inbox/</code> folder, or click <strong>+ Add Memory</strong> above.</p>
+      </div>
+    </main>
+
+    <!-- Side-Drawer Inspector -->
+    <aside id="inspector-drawer" class="inspector-drawer-panel hidden">
+      <div class="inspector-panel-header">
+        <div class="inspector-tags-wrap">
+          <span id="inspect-category" class="tag-pill-accent">General</span>
+          <span id="inspect-sensitive" class="tag-pill-vault hidden">🔒 In Vault</span>
+        </div>
+        <div class="inspector-header-buttons">
+          <button id="btn-inspect-edit-toggle" class="btn-dock-edit">Edit</button>
+          <button id="btn-close-inspector" class="btn-cross-close">✕</button>
+        </div>
+      </div>
+      <div id="inspect-view-mode" class="inspector-panel-body">
+        <h2 id="inspect-title" class="inspect-headline">Title</h2>
+        
+        <div class="inspect-meta-grid">
+          <div class="meta-card">
+            <span class="meta-label">STATUS</span>
+            <span class="meta-val">Indexed Locally</span>
+          </div>
+          <div class="meta-card">
+            <span class="meta-label">SECURITY</span>
+            <span class="meta-val">AES-256 Vault</span>
+          </div>
+          <div class="meta-card">
+            <span class="meta-label">SAVED</span>
+            <span id="inspect-meta" class="meta-val">Just now</span>
+          </div>
+        </div>
+
+        <div id="inspect-tags" class="inspect-chips-rail"></div>
+        <div class="inspect-text-slab">
+          <span class="inspect-slab-sub">EXTRACTED CONTENT PAYLOAD</span>
+          <div class="inspect-scroll-pane">
+            <div class="mac-window-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+            <pre id="inspect-content" class="inspect-code-viewport"></pre>
+          </div>
+        </div>
+      </div>
+      
+      <form id="inspect-edit-form" class="inspector-panel-body edit-mode hidden">
+        <div class="input-stack">
+          <label for="edit-title">Memory Title</label>
+          <input type="text" id="edit-title" required />
+        </div>
+        <div class="form-row-duo">
+          <div class="input-stack"><label for="edit-category">Topic</label><input type="text" id="edit-category" /></div>
+          <div class="input-stack"><label for="edit-tags">Tags</label><input type="text" id="edit-tags" /></div>
+        </div>
+        <div class="input-stack">
+          <label for="edit-content">Text Content</label>
+          <textarea id="edit-content" rows="12" required></textarea>
+        </div>
+        <div class="form-checkbox-wrap">
+          <input type="checkbox" id="edit-sensitive" />
+          <label for="edit-sensitive">Lock in Secret Vault</label>
+        </div>
+        <div class="auth-actions-row">
+          <button type="button" id="btn-edit-cancel" class="btn-dock-edit">Cancel</button>
+          <button type="submit" class="btn-laser-compact">Save Changes</button>
+        </div>
+      </form>
+
+      <div class="inspector-floating-dock">
+        <button id="btn-inspect-copy" class="btn-premium-copy magnetic-btn">Copy Payload</button>
+        <button id="btn-inspect-delete" class="btn-premium-delete magnetic-btn">Delete Memory</button>
+      </div>
+    </aside>
+
+    <div id="memory-modal" class="auth-backdrop hidden">
+      <div class="auth-slab modal-large">
+        <div class="auth-slab-laser"></div>
+        <div class="modal-ambient-glow"></div>
+        <div class="auth-top">
+          <div class="auth-brand-block"><span class="auth-star">✦</span><h3>Save Memory</h3></div>
+          <button id="btn-close-modal" class="btn-cross-close">✕</button>
+        </div>
+        
+        <form id="memory-form" class="auth-form-body">
+          <div class="input-stack">
+            <label for="form-title">Title</label>
+            <input type="text" id="form-title" placeholder="e.g. Wi-Fi Password, Meeting Notes" required />
+          </div>
+          <div class="form-row-duo">
+            <div class="input-stack"><label for="form-category">Category</label><input type="text" id="form-category" placeholder="Leave blank for AI auto-sort" /></div>
+            <div class="input-stack"><label for="form-tags">Tags</label><input type="text" id="form-tags" placeholder="wifi, hostel, credentials" /></div>
+          </div>
+          <div class="input-stack">
+            <label for="form-content">Text Content</label>
+            <textarea id="form-content" rows="6" placeholder="Paste notes, chat messages, or document text..." required></textarea>
+          </div>
+          <div class="form-checkbox-wrap">
+            <input type="checkbox" id="form-sensitive" />
+            <label for="form-sensitive">Lock in Secret Vault</label>
+          </div>
+          <div class="auth-actions-row">
+            <button type="button" id="btn-cancel-modal" class="btn-dock-edit">Cancel</button>
+            <button type="submit" class="btn-laser-compact magnetic-btn">Save Memory</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="pin-modal" class="auth-backdrop hidden">
+      <div class="auth-slab modal-pin-box">
+        <div class="auth-slab-laser"></div>
+        <div class="auth-top"><div class="auth-brand-block"><span>🔒</span><h3>Unlock Vault</h3></div><button id="btn-close-pin" class="btn-cross-close">✕</button></div>
+        <form id="pin-form" class="auth-form-body">
+          <p class="auth-explainer">Vault auto-locks after 5 minutes of inactivity for privacy.</p>
+          <div class="input-stack">
+            <input type="password" id="input-pin" placeholder="Enter PIN (Default: 1234)" required autocomplete="off" />
+          </div>
+          <div id="pin-error" class="pin-error-text hidden">Incorrect PIN. Try again.</div>
+          <div class="auth-actions-row">
+            <button type="button" id="btn-cancel-pin" class="btn-dock-edit">Cancel</button>
+            <button type="submit" class="btn-laser-compact magnetic-btn">Unlock</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
+
+  <div id="toast-container" class="toast-capsule-station"></div>
 
   <script src="app.js"></script>
 </body>
