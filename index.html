@@ -601,6 +601,7 @@
           <button id="btn-export" class="dock-util-btn">Backup</button>
           <label class="dock-util-btn">Restore<input type="file" id="file-import" accept=".json" style="display:none;" /></label>
           <button id="btn-signout" class="dock-util-btn">Sign Out</button>
+          <button id="btn-fetch-gmail" class="dock-util-btn">Fetch Gmail</button>
         </div>
       </div>
     </header>
@@ -640,6 +641,59 @@
             </div>
             <div id="ask-answer-text" class="drawer-response-text"></div>
             <div class="drawer-bottom-bar"><div id="ask-source-meta" class="drawer-source-stamp"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="digest-card" id="digest-card">
+        <div class="digest-card-header">
+          <div class="digest-card-title">
+            <span class="digest-card-icon">🗞️</span>
+            <span>Weekly Digest</span>
+          </div>
+          <span id="digest-date-label" class="digest-date-label">Loading…</span>
+        </div>
+        <p id="digest-summary-text" class="digest-summary-text">Loading your latest digest…</p>
+        <div class="digest-card-actions">
+          <button id="btn-digest-generate" class="btn-organize-ai magnetic-btn">Generate Now</button>
+          <div class="digest-recipient-row">
+            <input type="email" id="digest-recipient-input" placeholder="Email address for weekly digest" autocomplete="off" />
+            <button id="btn-digest-save-recipient" class="dock-util-btn">Save</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="autofill-card" id="autofill-card">
+        <div class="digest-card-header">
+          <div class="digest-card-title">
+            <span class="digest-card-icon">🧾</span>
+            <span>Autofill Profile</span>
+          </div>
+          <button id="btn-autofill-save" class="dock-util-btn">Save</button>
+        </div>
+        <p class="autofill-card-subtitle">What RaSh has learned to fill into forms for you. Correct anything that's wrong.</p>
+        <div class="autofill-grid">
+          <div class="input-stack"><label for="af-firstName">First Name</label><input type="text" id="af-firstName" /></div>
+          <div class="input-stack"><label for="af-lastName">Last Name</label><input type="text" id="af-lastName" /></div>
+          <div class="input-stack"><label for="af-email">Email</label><input type="email" id="af-email" /></div>
+          <div class="input-stack"><label for="af-phone">Phone</label><input type="text" id="af-phone" /></div>
+          <div class="input-stack"><label for="af-street">Street</label><input type="text" id="af-street" /></div>
+          <div class="input-stack"><label for="af-city">City</label><input type="text" id="af-city" /></div>
+          <div class="input-stack"><label for="af-state">State</label><input type="text" id="af-state" /></div>
+          <div class="input-stack"><label for="af-zip">ZIP</label><input type="text" id="af-zip" /></div>
+          <div class="input-stack"><label for="af-pincode">Pincode</label><input type="text" id="af-pincode" /></div>
+          <div class="input-stack"><label for="af-college">College</label><input type="text" id="af-college" /></div>
+          <div class="input-stack"><label for="af-day">DOB Day</label><input type="text" id="af-day" /></div>
+          <div class="input-stack"><label for="af-month">DOB Month</label><input type="text" id="af-month" /></div>
+          <div class="input-stack"><label for="af-year">DOB Year</label><input type="text" id="af-year" /></div>
+          <div class="input-stack">
+            <label for="af-gender">Gender</label>
+            <select id="af-gender">
+              <option value="">—</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+              <option value="other">Other</option>
+            </select>
           </div>
         </div>
       </section>
@@ -777,7 +831,7 @@
         <form id="pin-form" class="auth-form-body">
           <p class="auth-explainer">Vault auto-locks after 5 minutes of inactivity for privacy.</p>
           <div class="input-stack">
-            <input type="password" id="input-pin" placeholder="Enter PIN (Default: 1234)" required autocomplete="off" />
+            <input type="password" id="input-pin" placeholder="Enter PIN" required autocomplete="off" />
           </div>
           <div id="pin-error" class="pin-error-text hidden">Incorrect PIN. Try again.</div>
           <div class="auth-actions-row">

@@ -759,8 +759,53 @@
   let busy = false;       // this tab is waiting for an answer (local only)
   let thinkingEl = null;  // "..." dots, local only
 
+  // Streaming: a request id guards against a token from an old/aborted question landing after a
+  // new one has started. The live bubble is local-only, exactly like the thinking dots it
+  // replaces - the real answer is still only ever persisted once the full response arrives.
+  let streamRequestSeq = 0;
+  let activeStreamRequestId = null;
+  let streamingEl = null;
+  let streamingTextEl = null;
+
   function removeThinking() {
     if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
+  }
+
+  function appendStreamingToken(text) {
+    if (!streamingEl) {
+      removeThinking();
+      streamingEl = el("div", "card");
+      streamingTextEl = el("div", "body", "");
+      streamingEl.appendChild(streamingTextEl);
+      answerEl.appendChild(streamingEl);
+    }
+    streamingTextEl.textContent += text;
+    scrollToEnd();
+  }
+
+  function removeStreamingAnswer() {
+    if (streamingEl) { streamingEl.remove(); streamingEl = null; streamingTextEl = null; }
+  }
+
+  try {
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message && message.type === "RASH_STREAM_TOKEN" && message.requestId === activeStreamRequestId) {
+        appendStreamingToken(message.text || "");
+      }
+    });
+  } catch (e) {}
+
+  // Last 4 real turns (user question / assistant answer), for the server to resolve short
+  // follow-ups like "and before that?" - file cards and notes aren't part of the conversation text.
+  function recentHistoryForServer() {
+    return history
+      .map((m) => {
+        if (m.role === "user") return { role: "user", text: m.text || "" };
+        if (m.role === "answer") return { role: "assistant", text: m.answer || "" };
+        return null;
+      })
+      .filter(Boolean)
+      .slice(-4);
   }
 
   function showThinking() {
@@ -982,7 +1027,7 @@
         more.disabled = true;
         busy = true;
         showThinking();
-        safeSend({ type: "RASH_QUERY", question: d.question, mode: "memory-only" }, (res) => {
+        safeSend({ type: "RASH_QUERY", question: d.question, mode: "memory-only", history: recentHistoryForServer() }, (res) => {
           busy = false;
           removeThinking();
           addToHistory(resultToItems(res));
@@ -1032,6 +1077,14 @@
     return PAGE_WORDS.test(q) ? "page" : "unclear";
   }
 
+  // "What's on this page" vs "where did he study": both route to mode "page", but a whole-page
+  // summary needs different extraction (first ~3,000 words in reading order, not the passages
+  // that happen to match the question's own keywords) and a different prompt.
+  const SUMMARY_INTENT = /\bsummar(y|ize|ise)\b|\btl;?dr\b|\bwhat'?s\s+(this|on\s+(my\s+)?screen)\b|\bwhats\s+(this|on\s+(my\s+)?screen)\b|\b(this|current)\s+(page|article|site|tab)\b|\bwhat\s+is\s+this\b|^\s*page\??\s*$/i;
+  function isSummaryRequest(q) {
+    return SUMMARY_INTENT.test(String(q || "").trim());
+  }
+
   // ---------- Reading the current page as plain text (used only to answer; never saved) ----------
   const PAGE_NOISE = 'nav, header, footer, aside, form, script, style, noscript, iframe, button, select, ' +
     '[role="navigation"], [role="banner"], [role="complementary"], [role="search"], [aria-hidden="true"], ' +
@@ -1040,6 +1093,8 @@
   const PAGE_BLOCKS = "h1,h2,h3,h4,p,li,td,th,blockquote,figcaption,dd,dt,pre";
   const FOOTNOTES = /\[\[[^\]]{1,20}\]\]|\[\d{1,3}\]|\[[a-z]\]|\[(?:citation needed|edit|note \d+|clarification needed|when\?|who\?|dubious[^\]]*)\]/gi;
   const PAGE_MAX_CHARS = 8000;
+  const PAGE_SUMMARY_MAX_CHARS = 18000; // a whole-page summary needs far more room than one targeted fact does - stays under the server's 20,000-char limit
+  const SUMMARY_WORD_LIMIT = 3000;
 
   const INFOBOX = 'table[class*="infobox"], .infobox, .vcard, [class*="infobox"], [class*="quick-facts"], [class*="key-facts"], [class*="factbox"], [class*="fact-box"]';
 
@@ -1155,10 +1210,33 @@
     return keep.sort((a, b) => a.i - b.i).map((x) => x.line).join("\n");
   }
 
+  // Headings in reading order (h1-h6), deduped - gives a summary prompt the page's own outline
+  // even when the question has no keywords of its own to search for.
+  function pageHeadings(root) {
+    const seen = new Set();
+    const out = [];
+    root.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((h) => {
+      if (insideNoise(h, root)) return;
+      const t = cleanPageText(blockText(h));
+      if (t.length < 2 || t.length > 200 || seen.has(t)) return;
+      seen.add(t);
+      out.push(t);
+    });
+    return out.slice(0, 25).join("\n");
+  }
+
+  // The first N words of a block of text, in its original order - used for whole-page summaries,
+  // where the goal is broad coverage rather than the passages that best match the question.
+  function takeFirstWords(text, maxWords) {
+    const words = String(text || "").split(/\s+/).filter(Boolean);
+    if (words.length <= maxWords) return words.join(" ");
+    return words.slice(0, maxWords).join(" ");
+  }
+
   // Title, key facts, first three paragraphs, then the best matching passages, within PAGE_MAX_CHARS
-  function buildPageText(question) {
+  function buildPageText(question, summaryMode) {
     const root = document.querySelector("article") || document.querySelector("main") || document.body;
-    const facts = cleanPageText(keyFacts(root)).slice(0, 2500);
+    const headings = pageHeadings(root);
     const intro = introParagraphs(root);
     const introText = intro.join("\n").slice(0, 2500);
     const introSet = new Set(intro);
@@ -1175,10 +1253,22 @@
     }
 
     let text = "Page title: " + (document.title || "") + "\n";
+    if (headings) text += "Headings:\n" + headings + "\n";
+
+    if (summaryMode) {
+      // "What's this page about" needs broad, front-loaded coverage in reading order - not the
+      // narrow, keyword-scored passages the fact-lookup path below uses.
+      const bodyText = takeFirstWords([introText, rest.join("\n")].filter(Boolean).join("\n"), SUMMARY_WORD_LIMIT);
+      if (!headings && !bodyText) return "";
+      if (bodyText) text += "Main content:\n" + bodyText;
+      return text.slice(0, PAGE_SUMMARY_MAX_CHARS).trim();
+    }
+
+    const facts = cleanPageText(keyFacts(root)).slice(0, 2500);
     if (facts) text += "Key facts:\n" + facts + "\n";
     if (introText) text += "Introduction:\n" + introText + "\n";
     const picked = pickPassages(rest, question, PAGE_MAX_CHARS - text.length - 20);
-    if (!facts && !introText && !picked) return "";
+    if (!headings && !facts && !introText && !picked) return "";
     if (picked) text += "Other passages:\n" + picked;
     return text.slice(0, PAGE_MAX_CHARS).trim();
   }
@@ -1707,7 +1797,16 @@
     const done = (items) => { busy = false; removeThinking(); addToHistory(items); };
 
     if (mode === "memory") {
-      safeSend({ type: "RASH_QUERY", question: q }, (res) => done(resultToItems(res)));
+      const requestId = ++streamRequestSeq;
+      activeStreamRequestId = requestId;
+      safeSend(
+        { type: "RASH_QUERY", question: q, history: recentHistoryForServer(), requestId: requestId },
+        (res) => {
+          if (activeStreamRequestId === requestId) activeStreamRequestId = null;
+          removeStreamingAnswer();
+          done(resultToItems(res));
+        }
+      );
       return;
     }
 
@@ -1722,11 +1821,12 @@
       cardOnly("I'm sorry, I can't read this page because it looks sensitive. Thank you for understanding.", "This page was not read");
       return;
     }
-    const text = buildPageText(q);
+    const summaryIntent = isSummaryRequest(q);
+    const text = buildPageText(q, summaryIntent);
     if (!text) { cardOnly("I could not find that.", "From this page"); return; }
 
     safeSend(
-      { type: "RASH_QUERY", question: q, mode: "page", page: { title: document.title || "", url: location.href, text: text } },
+      { type: "RASH_QUERY", question: q, mode: "page", page: { title: document.title || "", url: location.href, text: text, summary: summaryIntent }, history: recentHistoryForServer() },
       (res) => {
         // Only a server that confirms it answered from the page may answer; an old server would search memory
         const d = res && res.data;

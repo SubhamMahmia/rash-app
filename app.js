@@ -664,27 +664,44 @@ window.addEventListener('drop', async (e) => {
   showToast(`Ingesting ${supported.length} file${supported.length > 1 ? 's' : ''} to local DB…`);
 
   for (const file of supported) {
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
     try {
-      const text = await readFileAsText(file);
-      const payload = {
-        form_name: file.name,
-        category: 'Dropped File',
-        tags: 'drag-drop, auto-indexed',
-        content: text.substring(0, 50000),
-        is_sensitive: 0
-      };
+      if (isPdf) {
+        const buf = await file.arrayBuffer();
+        const res = await fetch('/api/attachments', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-File-Name': encodeURIComponent(file.name),
+            'X-Is-Sensitive': 'false'
+          },
+          body: buf
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || 'Upload failed');
+        }
+      } else {
+        const text = await readFileAsText(file);
+        const payload = {
+          form_name: file.name,
+          category: 'Dropped File',
+          tags: 'drag-drop, auto-indexed',
+          content: text.substring(0, 50000),
+          is_sensitive: 0
+        };
 
-      await fetch('/api/records', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+        await fetch('/api/records', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
     } catch (err) {
       console.error(err);
       showToast(`Failed to parse: ${file.name}`);
     }
   }
-
   showToast(`✦ Indexed ${supported.length} file${supported.length > 1 ? 's' : ''} completely offline.`);
   if (isAuthenticated) fetchRecords();
 });
@@ -922,6 +939,7 @@ function syncView() {
     if (viewApp) viewApp.classList.remove('hidden');
     if (userWelcomeLabel) {
       userWelcomeLabel.innerText = `Welcome back, ${currentUser}. Ambient memory online.`;
+      loadDigest(); loadAutofillProfile();
     }
     fetchRecords();
   } else {
@@ -1266,8 +1284,16 @@ function morphCardToCenterModal(sourceElement, onComplete) {
   clone.style.borderRadius = '20px';
   clone.classList.remove('memory-node');
 
-  // Step 1 Transition: Luxurious slow glide to center
-  clone.style.transition = 'all 0.8s cubic-bezier(0.25, 1, 0.5, 1)';
+  // .memory-node supplied the border and shadow, and just got stripped off with the class above -
+  // set both explicitly so the clone stays lit the instant it appears, then transition them
+  // smoothly to the glow state instead of leaving a borderless gap during the flight.
+  clone.style.border = '1px solid rgba(99, 102, 241, 0.4)';
+  clone.style.boxShadow = '0 12px 40px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.05)';
+
+  // Step 1: fast, snappy launch off the card into the center - an iOS sheet's initial presentation
+  const FLIGHT_MS = 450;
+  const EXPAND_MS = 550;
+  clone.style.transition = `top ${FLIGHT_MS}ms cubic-bezier(0.16, 1, 0.3, 1), left ${FLIGHT_MS}ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow ${FLIGHT_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`;
 
   document.body.appendChild(clone);
   sourceElement.style.opacity = '0';
@@ -1294,11 +1320,15 @@ function morphCardToCenterModal(sourceElement, onComplete) {
   requestAnimationFrame(() => {
     clone.style.top = centerTop + 'px';
     clone.style.left = centerLeft + 'px';
-    clone.style.boxShadow = '0 0 80px rgba(99, 102, 241, 0.6), 0 0 120px rgba(6, 182, 212, 0.4)';
+    clone.style.boxShadow = '0 0 80px rgba(99, 102, 241, 0.5)';
   });
 
+  // Starts the instant the flight transition's own duration elapses, so there's no held-still
+  // gap between arriving at center and beginning the expand - one continuous path, not two hops.
   setTimeout(() => {
-    clone.style.transition = 'all 0.7s cubic-bezier(0.22, 1, 0.36, 1)';
+    // Border is intentionally left out of this transition list - it stays fixed at
+    // rgba(99, 102, 241, 0.4) for the whole animation instead of shifting again here.
+    clone.style.transition = `top ${EXPAND_MS}ms cubic-bezier(0.32, 0.72, 0, 1), left ${EXPAND_MS}ms cubic-bezier(0.32, 0.72, 0, 1), width ${EXPAND_MS}ms cubic-bezier(0.32, 0.72, 0, 1), height ${EXPAND_MS}ms cubic-bezier(0.32, 0.72, 0, 1), opacity ${EXPAND_MS}ms cubic-bezier(0.32, 0.72, 0, 1)`;
 
     const targetWidth = 660;
     const targetHeight = Math.min(window.innerHeight * 0.85, 800);
@@ -1318,11 +1348,11 @@ function morphCardToCenterModal(sourceElement, onComplete) {
       inspectorDrawer.style.height = targetHeight + 'px';
       inspectorDrawer.style.transform = 'none';
 
-      inspectorDrawer.style.transition = 'all 0.7s cubic-bezier(0.22, 1, 0.36, 1)';
+      inspectorDrawer.style.transition = `all ${EXPAND_MS}ms cubic-bezier(0.32, 0.72, 0, 1)`;
       inspectorDrawer.style.opacity = '1';
       inspectorDrawer.classList.add('visible');
     }
-  }, 850);
+  }, FLIGHT_MS);
 
   setTimeout(() => {
     clone.remove();
@@ -1330,7 +1360,7 @@ function morphCardToCenterModal(sourceElement, onComplete) {
     sourceElement.classList.remove('morph-hidden');
     if (inspectorDrawer) inspectorDrawer.style.pointerEvents = 'auto';
     onComplete();
-  }, 1600);
+  }, FLIGHT_MS + EXPAND_MS);
 }
 
 function runCryptoScramble(element, finalStr) {
@@ -1650,8 +1680,9 @@ if (document.getElementById('pin-form')) {
       });
       const data = await res.json();
 
-      if (data.success || pin === '1234') {
+      if (data.success) {
         if (tempUnlockedRecord) {
+          let realContentLoaded = false;
           try {
             const secureRes = await fetch('/api/records', {
               headers: { 'x-vault-unlocked': 'true' }
@@ -1662,26 +1693,18 @@ if (document.getElementById('pin-form')) {
 
               if (realRecord && realRecord.content && !realRecord.content.includes('LOCKED CONTENT')) {
                 tempUnlockedRecord.content = realRecord.content;
+                realContentLoaded = true;
               }
             }
           } catch (err) {
-            console.warn('Secure fetch failed, falling back to dynamic mockup.');
+            console.warn('Secure fetch failed.', err);
           }
 
-          if (tempUnlockedRecord.content.includes('LOCKED CONTENT')) {
-            const title = (tempUnlockedRecord.form_name || '').toLowerCase();
-            if (title.includes('upi')) {
-              tempUnlockedRecord.content =
-                'UPI PIN: 492810\nBank: HDFC\nAccount: **** 4492\n\n(Decrypted securely on-device via Master PIN validation.)';
-            } else if (title.includes('hostel')) {
-              tempUnlockedRecord.content =
-                'Hostel Router: 192.168.1.1\nWiFi: RaSh_Secure_Net\nPasskey: x99#QlwA2\n\n(Decrypted securely on-device via Master PIN validation.)';
-            } else if (title.includes('house')) {
-              tempUnlockedRecord.content =
-                'House Alarm PIN: 7492\nGate Code: 9912\n\n(Decrypted securely on-device via Master PIN validation.)';
-            } else {
-              tempUnlockedRecord.content = '[Classified Data Block Unlocked]\n\nDecryption Successful.';
-            }
+          if (!realContentLoaded) {
+            if (pinModal) pinModal.classList.add('hidden');
+            showToast('Could not load that memory. Please try again.');
+            tempUnlockedRecord = null;
+            return;
           }
 
           if (pinModal) pinModal.classList.add('hidden');
@@ -1706,64 +1729,11 @@ if (document.getElementById('pin-form')) {
         pinError.classList.remove('hidden');
       }
     } catch (err) {
-      if (pin === '1234') {
-        if (tempUnlockedRecord) {
-          try {
-            const secureRes = await fetch('/api/records', {
-              headers: { 'x-vault-unlocked': 'true' }
-            });
-            if (secureRes.ok) {
-              const secureData = await secureRes.json();
-              const realRecord = secureData.find((r) => r.id === tempUnlockedRecord.id);
-              if (realRecord && realRecord.content && !realRecord.content.includes('LOCKED CONTENT')) {
-                tempUnlockedRecord.content = realRecord.content;
-              }
-            }
-          } catch (e) {
-            console.warn('Static fallback fetch failed.');
-          }
-
-          if (tempUnlockedRecord.content.includes('LOCKED CONTENT')) {
-            const title = (tempUnlockedRecord.form_name || '').toLowerCase();
-            if (title.includes('upi')) {
-              tempUnlockedRecord.content =
-                'UPI PIN: 492810\nBank: HDFC\nAccount: **** 4492\n\n(Decrypted securely on-device.)';
-            } else if (title.includes('hostel')) {
-              tempUnlockedRecord.content =
-                'Hostel Router: 192.168.1.1\nWiFi: RaSh_Secure_Net\nPasskey: x99#QlwA2\n\n(Decrypted securely on-device.)';
-            } else if (title.includes('house')) {
-              tempUnlockedRecord.content =
-                'House Alarm PIN: 7492\nGate Code: 9912\n\n(Decrypted securely on-device.)';
-            } else {
-              tempUnlockedRecord.content = '[Classified Data Block Unlocked]\n\nDecryption Successful.';
-            }
-          }
-
-          if (pinModal) pinModal.classList.add('hidden');
-          showToast('Decryption Executing...');
-          openInspector(tempUnlockedRecord, tempUnlockedRecord.sourceElement, true);
-        } else {
-          isVaultUnlocked = true;
-          const vIcon = document.getElementById('vault-icon');
-          const vLabel = document.getElementById('vault-label');
-          const vBtn = document.getElementById('btn-vault-toggle');
-
-          if (vIcon) vIcon.innerText = '🔓';
-          if (vLabel) vLabel.innerText = 'Vault Unlocked';
-          if (vBtn) vBtn.classList.add('unlocked');
-
-          if (pinModal) pinModal.classList.add('hidden');
-          showToast('Global Vault Unlocked');
-          resetVaultTimer();
-          fetchRecords();
-        }
-      } else if (pinError) {
-        pinError.classList.remove('hidden');
-      }
+      showToast('Could not reach the RaSh server.');
+      if (pinError) pinError.classList.remove('hidden');
     }
   });
 }
-
 if (document.getElementById('btn-cancel-pin')) {
   document.getElementById('btn-cancel-pin').addEventListener('click', () => {
     if (pinModal) pinModal.classList.add('hidden');
@@ -1951,6 +1921,184 @@ function formatDate(dateStr) {
     month: 'short',
     day: 'numeric',
     year: 'numeric'
+  });
+}
+
+// ==============================================================================
+// 13. WEEKLY DIGEST CARD
+// ==============================================================================
+async function loadDigest() {
+  const summaryEl = document.getElementById('digest-summary-text');
+  const dateEl = document.getElementById('digest-date-label');
+
+  if (summaryEl && dateEl) {
+    try {
+      const res = await fetch('/api/digest/latest');
+      const data = await res.json();
+
+      if (data.found) {
+        dateEl.innerText = formatDate(data.last_updated);
+        summaryEl.innerText = data.summary;
+      } else {
+        dateEl.innerText = 'No digest yet';
+        summaryEl.innerText = 'Click "Generate Now" to create your first weekly digest.';
+      }
+    } catch (err) {
+      dateEl.innerText = '';
+      summaryEl.innerText = 'Could not load the digest.';
+    }
+  }
+
+  try {
+    const settingsRes = await fetch('/api/digest/settings');
+    const settings = await settingsRes.json();
+    const recipientInput = document.getElementById('digest-recipient-input');
+    if (recipientInput && settings && settings.recipient) {
+      recipientInput.value = settings.recipient;
+    }
+  } catch (err) {
+    // Optional to load - the card still works without a saved recipient
+  }
+}
+
+if (document.getElementById('btn-digest-generate')) {
+  document.getElementById('btn-digest-generate').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-digest-generate');
+    showToast('Generating digest…');
+    if (btn) btn.disabled = true;
+
+    try {
+      const res = await fetch('/api/digest/generate', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to generate digest');
+      showToast('Weekly digest generated');
+      loadDigest();
+    } catch (err) {
+      showToast('Could not generate the digest.');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+}
+
+if (document.getElementById('btn-digest-save-recipient')) {
+  document.getElementById('btn-digest-save-recipient').addEventListener('click', async () => {
+    const input = document.getElementById('digest-recipient-input');
+    const recipient = input ? input.value.trim() : '';
+
+    try {
+      const res = await fetch('/api/digest/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save that email.');
+      showToast('Digest recipient saved');
+    } catch (err) {
+      showToast(err.message || 'Could not save the recipient email.');
+    }
+  });
+}
+
+// ==============================================================================
+// 14. FETCH GMAIL (DOCK UTILITY BUTTON)
+// ==============================================================================
+if (document.getElementById('btn-fetch-gmail')) {
+  document.getElementById('btn-fetch-gmail').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-fetch-gmail');
+    showToast('Fetching emails…');
+    if (btn) btn.disabled = true;
+
+    try {
+      const res = await fetch('/api/gmail/recent?limit=3');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not fetch emails.');
+      showToast('Fetched recent emails');
+      fetchRecords();
+    } catch (err) {
+      showToast(err.message || 'Failed to fetch Gmail.');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+}
+
+// ==============================================================================
+// 15. AUTOFILL PROFILE CARD
+// ==============================================================================
+const AUTOFILL_PROFILE_FIELDS = [
+  ['firstName', 'af-firstName'], ['lastName', 'af-lastName'], ['email', 'af-email'], ['phone', 'af-phone'],
+  ['street', 'af-street'], ['city', 'af-city'], ['state', 'af-state'], ['zip', 'af-zip'], ['pincode', 'af-pincode'],
+  ['college', 'af-college'], ['day', 'af-day'], ['month', 'af-month'], ['year', 'af-year'], ['gender', 'af-gender']
+];
+
+let loadedAutofillProfile = {};
+
+async function loadAutofillProfile() {
+  try {
+    const res = await fetch('/api/autofill-profile');
+    const data = await res.json();
+    loadedAutofillProfile = data || {};
+
+    AUTOFILL_PROFILE_FIELDS.forEach(([field, id]) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      let value = loadedAutofillProfile[field] || '';
+      // The gender <select> only has male/female/other as options, so a differently-cased
+      // saved value (e.g. "Male") is matched case-insensitively rather than left blank.
+      if (field === 'gender' && value) {
+        const lower = value.toLowerCase();
+        value = ['male', 'female', 'other'].includes(lower) ? lower : '';
+      }
+      el.value = value;
+    });
+  } catch (err) {
+    showToast('Could not load the autofill profile.');
+  }
+}
+
+if (document.getElementById('btn-autofill-save')) {
+  document.getElementById('btn-autofill-save').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-autofill-save');
+    if (btn) btn.disabled = true;
+
+    const changed = AUTOFILL_PROFILE_FIELDS.filter(([field, id]) => {
+      const el = document.getElementById(id);
+      return el && el.value.trim() !== (loadedAutofillProfile[field] || '');
+    });
+
+    if (changed.length === 0) {
+      showToast('No changes to save');
+      if (btn) btn.disabled = false;
+      return;
+    }
+
+    let failures = 0;
+    for (const [field, id] of changed) {
+      const el = document.getElementById(id);
+      const value = el ? el.value.trim() : '';
+      try {
+        const res = await fetch('/api/autofill-profile/learn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ field, value })
+        });
+        const data = await res.json();
+        if (!res.ok || data.updated === false) failures++;
+        else loadedAutofillProfile[field] = value;
+      } catch (err) {
+        failures++;
+      }
+    }
+
+    if (failures === 0) {
+      showToast('Autofill profile saved');
+    } else {
+      showToast(`Saved, but ${failures} field${failures > 1 ? 's were' : ' was'} rejected (too short or placeholder-like)`);
+    }
+
+    if (btn) btn.disabled = false;
   });
 }
 

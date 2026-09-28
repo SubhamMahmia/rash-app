@@ -55,16 +55,58 @@ async function findFile(query) {
   return await res.json();
 }
 
-// page is only sent for page questions: { title, url, text }
-async function askRaSh(question, page) {
+// page is only sent for page questions: { title, url, text }. history is the last 4 turns,
+// forwarded as-is so the server can resolve short follow-ups like "and before that?".
+async function askRaSh(question, page, history) {
   const body = { question: question };
   if (page) { body.mode = "page"; body.page = page; }
+  if (Array.isArray(history) && history.length > 0) body.history = history.slice(-4);
   const res = await fetch(SERVER + "/api/ask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
   return await res.json();
+}
+
+// Plain-question streaming: parses the server's SSE response by hand (no EventSource here - a
+// service worker's fetch already gives a readable stream, which is all this needs), calling
+// onToken as each one arrives. Returns the final "done" payload, or null if the stream produced
+// nothing usable - the caller then falls back to the ordinary non-streaming askRaSh() above.
+async function askRaShStreaming(question, history, onToken) {
+  const params = new URLSearchParams({ question: question });
+  if (Array.isArray(history) && history.length > 0) {
+    params.set("history", JSON.stringify(history.slice(-4)));
+  }
+  const res = await fetch(SERVER + "/api/ask/stream?" + params.toString());
+  if (!res.ok || !res.body) return null;
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalData = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf("\n\n")) >= 0) {
+      const raw = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      let eventName = "message";
+      let data = "";
+      raw.split("\n").forEach((line) => {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      });
+      if (!data) continue;
+      let parsed;
+      try { parsed = JSON.parse(data); } catch (e) { continue; }
+      if (eventName === "token" && parsed.text) onToken(parsed.text);
+      else if (eventName === "done") finalData = parsed;
+    }
+  }
+  return finalData;
 }
 
 async function openFile(filePath, reveal) {
@@ -259,7 +301,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             title: clip(p.title, 300),
             url: safeHttpUrl(p.url),
             text: clip(p.text, 20000)
-          });
+          }, message.history);
           sendResponse({ ok: true, kind: "answer", data: pageAnswer });
           return;
         }
@@ -270,7 +312,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return;
           }
         }
-        const answer = await askRaSh(question);
+
+        // Try streaming first, pushing each token to the tab that asked so the widget can show
+        // words as they arrive; the tab matches them by requestId, in case a newer question has
+        // since started. Any failure (old server, network hiccup, bad stream) falls back to the
+        // plain non-streaming call below, exactly as if streaming had never been attempted.
+        const tabId = sender.tab && sender.tab.id;
+        let streamed = null;
+        try {
+          streamed = await askRaShStreaming(question, message.history, (text) => {
+            if (tabId != null) {
+              chrome.tabs.sendMessage(tabId, { type: "RASH_STREAM_TOKEN", requestId: message.requestId, text: text }, () => {
+                void chrome.runtime.lastError; // tab may have navigated away mid-stream; nothing to do
+              });
+            }
+          });
+        } catch (err) {
+          streamed = null;
+        }
+        if (streamed) {
+          sendResponse({ ok: true, kind: "answer", data: streamed });
+          return;
+        }
+
+        const answer = await askRaSh(question, undefined, message.history);
         sendResponse({ ok: true, kind: "answer", data: answer });
       } catch (err) {
         sendResponse({ ok: false, error: String(err) });

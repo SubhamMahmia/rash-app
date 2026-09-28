@@ -3009,3 +3009,119 @@ body.xray-active .xray-hud-overlay {
 .hidden {
   display: none !important;
 }
+/* ============================================================
+   WEEKLY DIGEST + AUTOFILL PROFILE CARDS
+   ============================================================ */
+.digest-card,
+.autofill-card {
+  background: var(--slab-bg);
+  border: 1px solid var(--border-fine);
+  border-radius: var(--radius-lg);
+  padding: 24px 28px;
+  margin: 0 auto 28px;
+  max-width: 1180px;
+}
+
+.digest-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.digest-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--text-pure);
+}
+
+.digest-card-icon {
+  font-size: 1.1rem;
+}
+
+.digest-date-label {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-slate);
+}
+
+.digest-summary-text {
+  color: var(--text-slate);
+  font-size: 0.92rem;
+  line-height: 1.6;
+  margin-bottom: 18px;
+  white-space: pre-wrap;
+}
+
+.digest-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.digest-recipient-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 240px;
+}
+
+.digest-recipient-row input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-fine);
+  border-radius: var(--radius-sm);
+  color: var(--text-pure);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 9px 12px;
+}
+
+.autofill-card-subtitle {
+  color: var(--text-slate);
+  font-size: 0.85rem;
+  margin-bottom: 18px;
+}
+
+.autofill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.autofill-grid .input-stack input,
+.autofill-grid .input-stack select {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-fine);
+  border-radius: var(--radius-sm);
+  color: var(--text-pure);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 9px 12px;
+}
+
+.autofill-grid .input-stack label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-slate);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 640px) {
+  .digest-card,
+  .autofill-card {
+    padding: 18px 16px;
+  }
+}
