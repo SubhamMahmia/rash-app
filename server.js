@@ -9,9 +9,15 @@ const nodemailer = require('nodemailer');
 const chokidar = require('chokidar');
 const pdfParse = require('pdf-parse');
 const sqliteVec = require('sqlite-vec');
+const searchIndex = require('./search-index');
 
 const app = express();
-const PORT = 3000;
+// RASH_PORT / RASH_DB_PATH / RASH_TEST_MODE exist for scripts/eval-ask.js, which runs a second
+// server against a throwaway database. Unset, everything behaves exactly as before.
+const PORT = Number(process.env.RASH_PORT) || 3000;
+// Test mode: no inbox watcher, no disk scan, no MCP child, no cron/digest email. The embedding
+// worker still runs, so questions are answered the same way the real server answers them.
+const TEST_MODE = process.env.RASH_TEST_MODE === '1';
 
 const crypto = require('crypto');
 
@@ -97,7 +103,7 @@ function vaultUnlocked(req) {
 }
 
 // Initialize SQLite database
-const db = new Database('rash.db', { allowExtension: true });
+const db = new Database(process.env.RASH_DB_PATH || 'rash.db', { allowExtension: true });
 db.pragma('journal_mode = WAL');
 
 // Schema setup
@@ -178,6 +184,7 @@ async function embedText(text) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: EMBED_MODEL, prompt: full.slice(0, budget) }),
+        signal: AbortSignal.timeout(30000), // Ollama hung: give up, the record is retried by the next sweep
       });
 
       if (response.ok) {
@@ -240,6 +247,9 @@ function queueEmbedding(recordId, content) {
         console.warn(`[RAG] No embedding for record ${recordId} (embedding model unavailable).`);
         return;
       }
+      // Deleted or moved into the vault while this was being embedded: store nothing.
+      const still = db.prepare('SELECT is_sensitive FROM records WHERE id = ?').get(recordId);
+      if (!still || still.is_sensitive === 1) return;
       upsertEmbedding(recordId, embedding);
     } catch (err) {
       console.warn(`[RAG] Could not embed record ${recordId}:`, err.message);
@@ -258,7 +268,7 @@ function sweepMissingEmbeddings() {
       SELECT r.id AS id, r.content AS content
       FROM records r
       LEFT JOIN vec_records v ON v.rowid = r.id
-      WHERE v.rowid IS NULL
+      WHERE v.rowid IS NULL AND r.is_sensitive = 0
       ORDER BY r.last_updated DESC
     `).all();
   } catch (err) {
@@ -272,7 +282,7 @@ function sweepMissingEmbeddings() {
   console.log(`[RAG] ${missing.length} record(s) need an embedding; working through them in the background.`);
   for (const row of missing) queueEmbedding(row.id, row.content);
   embedQueue = embedQueue.then(() => {
-    const left = db.prepare('SELECT COUNT(*) AS n FROM records r LEFT JOIN vec_records v ON v.rowid = r.id WHERE v.rowid IS NULL').get().n;
+    const left = legacyVectorsPending();
     console.log(left === 0 ? '[RAG] Embedding sweep finished; every record is searchable.' : `[RAG] Embedding sweep finished, ${left} record(s) still missing (will retry on next start).`);
   });
   embedQueue = embedQueue.catch(() => {});
@@ -331,9 +341,16 @@ function listRecordsMissingEmbeddings() {
     SELECT r.id AS id, r.content AS content
     FROM records r
     LEFT JOIN vec_records v ON v.rowid = r.id
-    WHERE v.rowid IS NULL
+    WHERE v.rowid IS NULL AND r.is_sensitive = 0
     ORDER BY r.id ASC
   `).all();
+}
+
+// Non-vault records still waiting for their legacy whole-record vector (used until phase 3 moves
+// /api/ask onto the chunk index).
+function legacyVectorsPending() {
+  if (!vectorSearchAvailable) return 0;
+  return db.prepare('SELECT COUNT(*) AS n FROM records r LEFT JOIN vec_records v ON v.rowid = r.id WHERE v.rowid IS NULL AND r.is_sensitive = 0').get().n;
 }
 
 async function runBackfillCli(rebuildAll) {
@@ -351,7 +368,7 @@ async function runBackfillCli(rebuildAll) {
   }
 
   const missing = listRecordsMissingEmbeddings();
-  const total = db.prepare('SELECT COUNT(*) AS n FROM records').get().n;
+  const total = db.prepare('SELECT COUNT(*) AS n FROM records WHERE is_sensitive = 0').get().n;
   if (missing.length === 0) {
     console.log(`Nothing to do: all ${total} record(s) already have an embedding.`);
     process.exit(0);
@@ -403,6 +420,19 @@ if (process.argv.includes('--backfill-embeddings') || process.argv.includes('--r
   runBackfillCli(process.argv.includes('--rebuild-embeddings'));
   return; // stops the rest of this file from executing in a backfill run
 }
+
+// Vault records never keep index data. Older builds embedded them into vec_records; remove those.
+if (vectorSearchAvailable) {
+  const vaultIds = db.prepare('SELECT id FROM records WHERE is_sensitive = 1').all();
+  for (const { id } of vaultIds) deleteEmbedding(id);
+}
+
+// Smart Recall v2 chunk index (search-index.js). Creates its tables, then indexes in the background.
+searchIndex.init({
+  db,
+  vecLoaded: vectorSearchAvailable,
+  helpers: { recordTitle, recordUrl, recordBody, attachmentDisplayName },
+});
 
 try {
   db.exec("ALTER TABLE records ADD COLUMN category TEXT DEFAULT 'Uncategorized'");
@@ -629,6 +659,7 @@ async function callOllamaVision(prompt, base64Image) {
         stream: false,
         options: { temperature: 0.1, num_predict: 150 },
       }),
+      signal: AbortSignal.timeout(120000), // the vision model is slow on CPU, but must never hang
     });
     if (!response.ok) return null;
     const data = await response.json();
@@ -1331,7 +1362,8 @@ Classification:`;
           temperature: 0.1,
           num_predict: 40
         }
-      })
+      }),
+      signal: AbortSignal.timeout(20000), // a hung Ollama must not hold a save; falls back to "General"
     });
 
     if (!response.ok) throw new Error('Ollama offline');
@@ -1362,22 +1394,33 @@ function saveRecordToDb({ form_name, category, tags, content, is_sensitive }) {
       content = excluded.content,
       is_sensitive = excluded.is_sensitive,
       last_updated = CURRENT_TIMESTAMP
-    RETURNING id
+    RETURNING id, last_updated
   `);
 
+  const sensitive = is_sensitive ? 1 : 0;
   const row = upsertStmt.get({
     form_name,
     category: category || 'General',
     tags: tags || '',
     content,
-    is_sensitive: is_sensitive ? 1 : 0,
+    is_sensitive: sensitive,
   });
+  if (!row || !row.id) return null;
 
-  // The save is already done at this point. Its embedding is generated afterwards, in the
-  // background, so saving never waits on the embedding model. A re-saved record is re-embedded,
-  // so an edited page never keeps a stale vector.
-  if (row && row.id) queueEmbedding(row.id, content);
-  return row ? row.id : null;
+  // A vault record (new, or just moved into the vault) keeps no index data of any kind.
+  if (sensitive) {
+    deleteEmbedding(row.id);
+    searchIndex.purgeRecord(row.id);
+    return row.id;
+  }
+
+  // The save is already done at this point. Indexing happens afterwards, in the background, so
+  // saving never waits on the embedding model. The save event is logged now, so "what did I read
+  // before X" stays right even when a page is saved again later.
+  searchIndex.recordEvent(row.id, row.last_updated);
+  searchIndex.enqueue(row.id);
+  queueEmbedding(row.id, content);
+  return row.id;
 }
 
 // Offline Inbox Directory Watcher (Text + Markdown + PDF)
@@ -1386,14 +1429,14 @@ if (!fs.existsSync(inboxDir)) {
   fs.mkdirSync(inboxDir, { recursive: true });
 }
 
-const watcher = chokidar.watch(inboxDir, {
+const watcher = TEST_MODE ? null : chokidar.watch(inboxDir, {
   ignored: /(^|[\/\\])\../,
   persistent: true,
   ignoreInitial: false,
   depth: 10
 });
 
-watcher.on('add', async (filePath) => {
+if (watcher) watcher.on('add', async (filePath) => {
   const ext = path.extname(filePath).toLowerCase();
   const allowedTextExt = ['.txt', '.md', '.json', '.csv', '.log'];
 
@@ -1794,6 +1837,7 @@ app.delete('/api/records/:id', (req, res) => {
     const stmt = db.prepare('DELETE FROM records WHERE id = ?');
     stmt.run(id);
     deleteEmbedding(id); // don't leave an orphan vector behind
+    searchIndex.purgeRecord(Number(id));
     res.json({ success: true, message: 'Record deleted.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2368,6 +2412,28 @@ function instantAnswer(rawQuestion) {
   }
   return null;
 }
+
+// While a question is being answered (/api/ask and /api/ask/stream), the index worker waits, so
+// embedding never competes with an answer for the CPU.
+app.use('/api/ask', (_req, res, next) => {
+  searchIndex.beginQuery();
+  let ended = false;
+  res.once('close', () => { if (!ended) { ended = true; searchIndex.endQuery(); } });
+  next();
+});
+
+// { backend, indexed, total, pending, embedModel, ollamaUp }. pending also counts records still
+// waiting for their legacy whole-record vector, which /api/ask uses until phase 3.
+app.get('/api/index/status', async (req, res) => {
+  if (!isLocalRequest(req)) return res.status(403).json({ error: 'Not allowed.' });
+  try {
+    const s = await searchIndex.status();
+    s.pending += legacyVectorsPending();
+    res.json(s);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.post('/api/ask', async (req, res) => {
   const { question, mode, page, history } = req.body;
@@ -3143,6 +3209,16 @@ app.post('/api/digest/settings', (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`RaSh server running at http://localhost:${PORT}`);
+
+  // Catch up on any record that has no embedding yet (old records, or ones saved while Ollama
+  // was down). Runs in the background; the server is already answering requests.
+  sweepMissingEmbeddings();
+
+  if (TEST_MODE) {
+    console.log('[RaSh] Test mode: inbox watcher, file scan, MCP server and scheduled digest are off.');
+    return;
+  }
+
   console.log(`Watching inbox folder for offline files at: ${inboxDir}`);
 
   // Build the file-name index in the background, then refresh it every 5 minutes
@@ -3151,9 +3227,6 @@ const server = app.listen(PORT, () => {
   });
   setInterval(scanFiles, 5 * 60 * 1000);
 
-  // Catch up on any record that has no embedding yet (old records, or ones saved while Ollama
-  // was down). Runs in the background; the server is already answering requests.
-  sweepMissingEmbeddings();
   startMcpServer();
 
   // Every Sunday at 9:00 AM. Logged here so the schedule is verifiable without waiting a week.
