@@ -1062,6 +1062,84 @@
     return [{ role: "note", kind: "muted", text: d.message || "I could not find that." }];
   }
 
+  // ---------- Instant time/date/day: answered from the browser clock, before any routing
+  // decision or server call. This is what stops "time?" from ever reaching page mode: without
+  // this check, a question with no recall-words and no page-words match falls through to
+  // classifyQuestion's "unclear" branch, which runQuery treats the same as "page" - it reads the
+  // page and sends mode:"page" to the server, where the server's own instant-answer check used to
+  // be skipped for page mode. Typo-tolerant via a small fixed alias list plus a length-gated
+  // Levenshtein fallback (only for words of 4+ letters, matched only against 4+ letter keywords),
+  // so short unrelated words like "page" or "may" can't get misread as "date"/"day".
+  const RASH_TIMEZONE = "Asia/Kolkata";
+  const INSTANT_KEY_TOKENS = ["time", "current", "date", "today", "day"];
+  const INSTANT_ALIASES = {
+    tym: "time", tim: "time", tme: "time",
+    curent: "current", curnt: "current", currnt: "current",
+    dat: "date", dte: "date",
+    tdy: "today",
+    rn: "now", wat: "what", wats: "whats",
+  };
+
+  function levenshtein(a, b) {
+    const m = a.length, n = b.length;
+    if (m === 0) return n;
+    if (n === 0) return m;
+    const row = new Array(n + 1);
+    for (let j = 0; j <= n; j++) row[j] = j;
+    for (let i = 1; i <= m; i++) {
+      let prev = row[0];
+      row[0] = i;
+      for (let j = 1; j <= n; j++) {
+        const tmp = row[j];
+        row[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, row[j], row[j - 1]);
+        prev = tmp;
+      }
+    }
+    return row[n];
+  }
+
+  // Corrects only the handful of words this router cares about; a typo anywhere else in the
+  // question is left completely alone, so this never changes the meaning of a real question.
+  function correctInstantWords(question) {
+    return String(question || "").toLowerCase().split(/\s+/).map((raw) => {
+      const w = raw.replace(/[^a-z']/g, "");
+      if (!w) return raw;
+      if (INSTANT_ALIASES[w]) return INSTANT_ALIASES[w];
+      if (INSTANT_KEY_TOKENS.includes(w)) return raw;
+      if (w.length < 4) return raw; // too short to fuzzy-match safely ("day"/"may"/"way" collisions)
+      let best = null, bestDist = Infinity;
+      for (const key of INSTANT_KEY_TOKENS) {
+        if (key.length < 4) continue; // "day" only ever matches via an alias or its exact spelling
+        const d = levenshtein(w, key);
+        if (d < bestDist) { bestDist = d; best = key; }
+      }
+      return best && bestDist <= 1 ? best : raw;
+    }).join(" ");
+  }
+
+  const INSTANT_TIME_RE = /^\s*(?:wh?at'?s?\s+)?(?:the\s+)?(?:current\s+)?time(?:\s+is\s+it)?(?:\s+now)?(?:\s+in\s+[a-z]+)?\s*\??\s*$/i;
+  const INSTANT_DATE_RE = /^\s*(?:wh?at\s+is\s+|wh?at'?s?\s+)?(?:today'?s?\s+|the\s+)?date\s*\??\s*$/i;
+  const INSTANT_DAY_RE = /^\s*(?:wh?at\s+)?day\s+is\s+it\s*\??\s*$|^\s*wh?at\s+day\s*(?:is\s+(?:it|today))?\s*\??\s*$|^\s*day\s+today\s*\??\s*$/i;
+
+  // Pure routing decision: "time" | "date" | "day" | null. No DOM, no server, unit-testable as-is.
+  function classifyInstantIntent(rawQuestion) {
+    const q = String(rawQuestion || "").trim();
+    if (!q) return null;
+    const corrected = correctInstantWords(q);
+    if (INSTANT_TIME_RE.test(corrected)) return "time";
+    if (INSTANT_DAY_RE.test(corrected)) return "day";
+    if (INSTANT_DATE_RE.test(corrected)) return "date";
+    return null;
+  }
+
+  function instantClockAnswer(kind) {
+    const now = new Date();
+    const fmt = (opts) => new Intl.DateTimeFormat("en-US", { timeZone: RASH_TIMEZONE, ...opts }).format(now);
+    if (kind === "time") return "It's " + fmt({ hour: "numeric", minute: "2-digit", hour12: true }) + " (IST).";
+    if (kind === "day") return "Today is " + fmt({ weekday: "long" }) + ".";
+    return "Today is " + fmt({ weekday: "long", month: "long", day: "numeric", year: "numeric" }) + ".";
+  }
+
   // ---------- Where should a question be answered from? ----------
   // recall words -> saved memory; page words -> this page only; otherwise this page plus a "search memory" button
   const RECALL_WORDS = /\b(what|which|where)\s+(did|was|have|were)\s+i\s+(read|visit|visited|see|saw|open|opened|browse|browsed|watch|watched|look|looked|save|saved)|\bdid\s+i\s+(read|save|visit|see|open|watch)\b|\b(yesterday|today|tonight|last night|last week|last month|this week|this morning|this afternoon|this evening|earlier|days? ago|weeks? ago|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b(last|latest|most recent|previous)\s+(article|page|site|website|tab|thing|post|blog|video)\b|\bthe\s+(page|article|site|post|video)\s+(about|on|called|named)\b|\bmy\s+(memory|memories)\b|\b(kal|parso|pichle|pichhle|padha|padhi|padhe|dekha|dekhi)\b/i;
@@ -1754,8 +1832,21 @@
   function submitQuestion() {
     const q = input.value.trim();
     if (!q || busy) return; // an attachment with no typed text at all: do nothing (Send is a no-op)
-    busy = true;
     input.value = "";
+
+    // Instant time/date/day: answered from the browser clock, before anything else - no server
+    // call, no page read, no attachment/Gmail/routing checks at all.
+    const instantKind = classifyInstantIntent(q);
+    if (instantKind) {
+      console.log("[RaSh] route: instant |", JSON.stringify(q));
+      addToHistory([
+        { role: "user", text: q },
+        { role: "answer", kind: "answer", title: "", answer: instantClockAnswer(instantKind), source_url: "", last_updated: "", source_label: "Instant answer" },
+      ]);
+      return;
+    }
+
+    busy = true;
     showThinking();
 
     const attachment = pendingAttachment;

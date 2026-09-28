@@ -2377,10 +2377,10 @@ app.post('/api/ask', async (req, res) => {
     return res.status(400).json({ error: 'Please enter a question.' });
   }
 
-  if (mode !== 'page') {
-    const instant = instantAnswer(question);
-    if (instant) return res.json(instant);
-  }
+  // Runs before page mode too: a page-text payload for "time?" (the widget used to send one, from
+  // its own now-fixed misrouting) must never reach the LLM with the page's text instead of the clock.
+  const instant = instantAnswer(question);
+  if (instant) return res.json(instant);
 
   // Page question: answered ONLY from the page text sent with the request. Saved memories are not used
   // and nothing is stored. One self-contained message to the local model.
