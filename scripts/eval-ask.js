@@ -7,8 +7,10 @@
 // It never opens rash.db. Works the same on Windows and macOS: no shell, only path.join and
 // process.execPath.
 //
-//   npm run eval              normal run
-//   npm run eval -- --verbose also print the test server's own log lines
+//   npm run eval                                   normal run
+//   npm run eval -- --verbose                      also print the test server's own log lines
+//   npm run eval -- --answer-model=llama3.2:3b     try another answer model
+//   npm run eval -- --top-k=3 --floor=0.55         try other retrieval settings
 'use strict';
 
 const path = require('path');
@@ -20,6 +22,16 @@ const Database = require('better-sqlite3');
 
 const ROOT = path.join(__dirname, '..');
 const VERBOSE = process.argv.includes('--verbose');
+function flag(name) {
+  const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
+  return hit ? hit.slice(name.length + 3) : null;
+}
+// Passed to the test server as environment variables (search-index.js reads them).
+const OVERRIDES = {
+  RASH_ANSWER_MODEL: flag('answer-model'),
+  RASH_TOP_K: flag('top-k'),
+  RASH_RELEVANCE_FLOOR: flag('floor'),
+};
 const NOT_FOUND = "I couldn't find that in your memory.";
 const VAULT_SECRET = '482913';
 const QUESTION_TIMEOUT_MS = 180000;
@@ -562,9 +574,10 @@ async function main() {
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const serverLog = [];
+  const overrides = Object.fromEntries(Object.entries(OVERRIDES).filter(([, v]) => v));
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT,
-    env: { ...process.env, RASH_TEST_MODE: '1', RASH_PORT: String(port), RASH_DB_PATH: dbPath },
+    env: { ...process.env, ...overrides, RASH_TEST_MODE: '1', RASH_PORT: String(port), RASH_DB_PATH: dbPath },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
@@ -592,9 +605,17 @@ async function main() {
   try {
     console.log(`Smart Recall eval: ${FIXTURES.length} fixture records, ${QUESTIONS.length} questions.`);
     const system = await waitForServer(base, child);
-    console.log(`Test server on port ${port} (model ${system.model}, hardware tier ${system.tier}).`);
+    const tuning = Object.entries(overrides).map(([k, v]) => `${k}=${v}`).join(', ');
+    console.log(`Test server on port ${port} (answer model ${system.answerModel || system.model}, hardware tier ${system.tier}${tuning ? ', ' + tuning : ''}).`);
     const indexState = await waitForIndex(base, dbPath);
-    console.log(`Index: ${indexState}.\n`);
+    console.log(`Index: ${indexState}.`);
+    // A running server has its answer model loaded already; wait for that, so timings compare
+    // like with like instead of charging the model's load time to whichever question is first.
+    let modelState = system.answerModelState;
+    for (let t = Date.now(); modelState === 'loading' && Date.now() - t < 240000; await sleep(1000)) {
+      modelState = (await httpJson(base, '/api/system')).body.answerModelState;
+    }
+    console.log(`Answer model: ${modelState || 'unknown'}.\n`);
 
     const results = [];
     for (let i = 0; i < QUESTIONS.length; i++) {
@@ -618,13 +639,16 @@ async function main() {
         verdict = fail(err.name === 'AbortError' ? `no answer within ${QUESTION_TIMEOUT_MS / 1000}s` : `request failed: ${err.message}`);
       }
       const ms = Date.now() - t0;
-      results.push({ n: i + 1, q, ms, ...verdict, text: visibleText(body) });
-      console.log(`${pad(i + 1, 3)}${verdict.pass ? 'PASS' : 'FAIL'}  ${pad((ms / 1000).toFixed(1) + 's', 8)}${pad(q, 46)}${verdict.why}`);
-      if (!verdict.pass) console.log(`${' '.repeat(17)}got: "${safeExcerpt(visibleText(body))}"`);
+      const route = body.route || '';
+      results.push({ n: i + 1, q, ms, route, ...verdict, text: visibleText(body) });
+      console.log(`${pad(i + 1, 3)}${verdict.pass ? 'PASS' : 'FAIL'}  ${pad((ms / 1000).toFixed(1) + 's', 8)}${pad(q, 46)}${pad(route, 34)}${verdict.why}`);
+      if (!verdict.pass || VERBOSE) console.log(`${' '.repeat(17)}got: "${safeExcerpt(visibleText(body))}"`);
     }
 
     const passed = results.filter((r) => r.pass).length;
-    console.log(`\nScore: ${passed}/${results.length}   median answer time: ${(median(results.map((r) => r.ms)) / 1000).toFixed(1)}s`);
+    const modelAnswers = results.filter((r) => /^hybrid/.test(r.route) && r.ms > 500); // went to the answer model
+    console.log(`\nScore: ${passed}/${results.length}   median answer time: ${(median(results.map((r) => r.ms)) / 1000).toFixed(1)}s` +
+      (modelAnswers.length ? `   median model-written answer: ${(median(modelAnswers.map((r) => r.ms)) / 1000).toFixed(1)}s (${modelAnswers.length} question${modelAnswers.length === 1 ? '' : 's'})` : ''));
   } catch (err) {
     exitCode = 2;
     console.error('\nEval could not run: ' + err.message);
@@ -635,4 +659,5 @@ async function main() {
   process.exit(exitCode);
 }
 
-main();
+if (require.main === module) main();
+module.exports = { FIXTURES, buildDatabase, ids }; // lets a tuning script reuse the same fixtures

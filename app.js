@@ -906,6 +906,7 @@ let currentUser = localStorage.getItem('rash_user_name') || 'Member';
 let allRecords = [];
 let activeCategory = 'All';
 let isVaultUnlocked = false;
+let vaultToken = null; // from POST /api/vault/unlock, sent as x-vault-token while the vault is unlocked
 let tempUnlockedRecord = null;
 let activeInspectedNode = null;
 let isSignUpMode = false;
@@ -1010,6 +1011,7 @@ if (document.getElementById('btn-signout')) {
   document.getElementById('btn-signout').addEventListener('click', () => {
     isAuthenticated = false;
     isVaultUnlocked = false;
+    vaultToken = null;
     localStorage.removeItem('rash_user_authenticated');
     showToast('Workspace fully air-gapped and locked.');
     syncView();
@@ -1025,6 +1027,7 @@ function resetVaultTimer() {
 
   vaultTimeout = setTimeout(() => {
     isVaultUnlocked = false;
+    vaultToken = null;
 
     const vaultIcon = document.getElementById('vault-icon');
     const vaultLabel = document.getElementById('vault-label');
@@ -1049,7 +1052,7 @@ function resetVaultTimer() {
 async function fetchRecords() {
   try {
     const res = await fetch('/api/records', {
-      headers: { 'x-vault-unlocked': isVaultUnlocked ? 'true' : 'false' }
+      headers: isVaultUnlocked && vaultToken ? { 'x-vault-token': vaultToken } : {}
     });
 
     if (!res.ok) {
@@ -1589,7 +1592,7 @@ async function handleAsk() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-vault-unlocked': isVaultUnlocked ? 'true' : 'false'
+        ...(isVaultUnlocked && vaultToken ? { 'x-vault-token': vaultToken } : {})
       },
       body: JSON.stringify({ question: query })
     });
@@ -1641,6 +1644,7 @@ if (document.getElementById('btn-vault-toggle')) {
   document.getElementById('btn-vault-toggle').addEventListener('click', () => {
     if (isVaultUnlocked) {
       isVaultUnlocked = false;
+      vaultToken = null;
       const vIcon = document.getElementById('vault-icon');
       const vLabel = document.getElementById('vault-label');
       const vBtn = document.getElementById('btn-vault-toggle');
@@ -1681,11 +1685,12 @@ if (document.getElementById('pin-form')) {
       const data = await res.json();
 
       if (data.success) {
+        vaultToken = data.token || null;
         if (tempUnlockedRecord) {
           let realContentLoaded = false;
           try {
             const secureRes = await fetch('/api/records', {
-              headers: { 'x-vault-unlocked': 'true' }
+              headers: { 'x-vault-token': vaultToken }
             });
             if (secureRes.ok) {
               const secureData = await secureRes.json();
@@ -1699,6 +1704,7 @@ if (document.getElementById('pin-form')) {
           } catch (err) {
             console.warn('Secure fetch failed.', err);
           }
+          vaultToken = null;
 
           if (!realContentLoaded) {
             if (pinModal) pinModal.classList.add('hidden');

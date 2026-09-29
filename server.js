@@ -10,6 +10,7 @@ const chokidar = require('chokidar');
 const pdfParse = require('pdf-parse');
 const sqliteVec = require('sqlite-vec');
 const searchIndex = require('./search-index');
+const smartRecall = require('./smart-recall');
 
 const app = express();
 // RASH_PORT / RASH_DB_PATH / RASH_TEST_MODE exist for scripts/eval-ask.js, which runs a second
@@ -72,10 +73,6 @@ const VAULT_PIN = (() => {
 })();
 if (!VAULT_PIN) console.warn('[Vault] vault.pin is missing or empty: the Vault cannot be unlocked.');
 
-// TEMPORARY: accept the old "x-vault-unlocked: true" header until app.js sends x-vault-token.
-// Set to false as soon as app.js has been updated, otherwise the header still bypasses the PIN.
-const ALLOW_LEGACY_UNLOCK_HEADER = true;
-
 const VAULT_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 const vaultTokens = new Map(); // token -> expiry time (memory only, cleared on server restart)
 let failedUnlocks = [];        // timestamps of recent wrong PINs
@@ -94,12 +91,14 @@ function isStrictLocalRequest(req) {
   return origin.startsWith('chrome-extension://') || origin === `http://localhost:${PORT}` || origin === `http://127.0.0.1:${PORT}`;
 }
 
+// The only way in is a token from POST /api/vault/unlock, which checks the real PIN. The old
+// "x-vault-unlocked: true" header is ignored: it let any request see the vault without the PIN.
 function vaultUnlocked(req) {
   const tok = req.headers['x-vault-token'];
   const exp = typeof tok === 'string' ? vaultTokens.get(tok) : 0;
   if (exp && exp > Date.now()) return true;
   if (exp) vaultTokens.delete(tok);
-  return ALLOW_LEGACY_UNLOCK_HEADER && req.headers['x-vault-unlocked'] === 'true';
+  return false;
 }
 
 // Initialize SQLite database
@@ -130,15 +129,7 @@ const EMBED_DIMENSIONS = 768; // nomic-embed-text's output size
 
 // Cosine distance, because nomic-embed-text returns unnormalized vectors (plain L2 distance on
 // those ranks poorly and gives numbers you can't set a meaningful threshold on).
-//
-// The cutoff is deliberately generous. Measured against the real saved records: questions that DO
-// have an answer here scored 0.299-0.493, and questions that do NOT scored 0.429-0.576 - those
-// ranges overlap, so no single number separates them on its own. 0.55 keeps every real answer
-// (worst was 0.493) while still rejecting the obviously unrelated (0.565+). The overlap cases are
-// caught by the second gate instead: the model is told to reply NOT_FOUND when the retrieved text
-// doesn't actually contain the answer, which already becomes found: false.
 const EMBED_METRIC = 'cosine';
-const EMBED_MAX_DISTANCE = Number(process.env.RASH_EMBED_MAX_DISTANCE || 0.55);
 
 let vectorSearchAvailable = false;
 try {
@@ -183,7 +174,9 @@ async function embedText(text) {
       const response = await fetch('http://127.0.0.1:11434/api/embeddings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: EMBED_MODEL, prompt: full.slice(0, budget) }),
+        // keep_alive as everywhere else: without it, each of these calls cut the embedding model's
+        // stay in memory back to Ollama's 5-minute default.
+        body: JSON.stringify({ model: EMBED_MODEL, prompt: full.slice(0, budget), keep_alive: searchIndex.CONFIG.KEEP_ALIVE }),
         signal: AbortSignal.timeout(30000), // Ollama hung: give up, the record is retried by the next sweep
       });
 
@@ -286,47 +279,6 @@ function sweepMissingEmbeddings() {
     console.log(left === 0 ? '[RAG] Embedding sweep finished; every record is searchable.' : `[RAG] Embedding sweep finished, ${left} record(s) still missing (will retry on next start).`);
   });
   embedQueue = embedQueue.catch(() => {});
-}
-
-// Finds the records that are closest in MEANING to a question, rather than by shared keywords.
-// Returns { ok } so the caller can tell "the embedding model is unavailable, fall back to keyword
-// search" apart from "it worked, and genuinely nothing is close enough" - those need different
-// answers. `eligible` is the already-filtered candidate list (vault, site, form records).
-async function findRecordsByMeaning(question, eligible, wanted) {
-  if (!vectorSearchAvailable) return { ok: false, matches: [] };
-
-  const embedding = await embedText(question);
-  if (!embedding) return { ok: false, matches: [] };
-
-  const byId = new Map(eligible.map((r) => [r.id, r]));
-  let rows;
-  try {
-    // vec0 needs its LIMIT inside the KNN query itself, so the search runs alone in a CTE.
-    // It asks for more candidates than are wanted, because some get filtered out below.
-    rows = db.prepare(`
-      WITH nearest AS (
-        SELECT rowid AS id, distance
-        FROM vec_records
-        WHERE embedding MATCH ?
-        ORDER BY distance
-        LIMIT ?
-      )
-      SELECT id, distance FROM nearest ORDER BY distance
-    `).all(blobFromEmbedding(embedding), Math.max(wanted * 4, 15));
-  } catch (err) {
-    console.warn('[RAG] Vector search failed:', err.message);
-    return { ok: false, matches: [] };
-  }
-
-  const matches = [];
-  for (const row of rows) {
-    if (row.distance > EMBED_MAX_DISTANCE) break; // sorted by distance, so the rest are worse still
-    const record = byId.get(row.id);
-    if (!record) continue; // filtered out: locked vault record, wrong site, or a form record
-    matches.push({ record, distance: row.distance });
-    if (matches.length >= wanted) break;
-  }
-  return { ok: true, matches };
 }
 
 // ---------------------------------------------------------------------------
@@ -1358,9 +1310,11 @@ Classification:`;
         model: OLLAMA_MODEL,
         prompt: prompt,
         stream: false,
+        keep_alive: searchIndex.CONFIG.KEEP_ALIVE,
         options: {
           temperature: 0.1,
-          num_predict: 40
+          num_predict: 40,
+          num_ctx: numCtxFor(OLLAMA_MODEL, 4096), // unset, Ollama used its own default and reloaded the model
         }
       }),
       signal: AbortSignal.timeout(20000), // a hung Ollama must not hold a save; falls back to "General"
@@ -1906,19 +1860,28 @@ app.post('/api/import', (req, res) => {
 // forever, which is worse than a clear failure. Returns whether it timed out so the caller can say so.
 const OLLAMA_TIMEOUT_MS = Number(process.env.RASH_OLLAMA_TIMEOUT_MS || 60000);
 
+// Smart Recall's answer model is always loaded with the same num_ctx: if any other call here
+// happens to use that same model (e.g. RASH_MODEL set to it), it gets that value too, because a
+// different num_ctx makes Ollama unload and reload the model.
+function numCtxFor(model, wanted) {
+  return model === searchIndex.CONFIG.ANSWER_MODEL ? searchIndex.CONFIG.ANSWER_NUM_CTX : wanted;
+}
+
 async function runOllama(prompt, numPredict, timeoutMs, model, numCtx) {
   const controller = new AbortController();
   const limit = timeoutMs || OLLAMA_TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), limit);
+  const useModel = model || OLLAMA_MODEL;
   try {
     const response = await fetch('http://127.0.0.1:11434/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: model || OLLAMA_MODEL,
+        model: useModel,
         prompt,
         stream: false,
-        options: { temperature: 0.1, num_predict: numPredict, num_ctx: numCtx || 4096 },
+        keep_alive: searchIndex.CONFIG.KEEP_ALIVE,
+        options: { temperature: 0.1, num_predict: numPredict, num_ctx: numCtxFor(useModel, numCtx || 4096) },
       }),
       signal: controller.signal,
     });
@@ -1952,10 +1915,6 @@ const ASK_STOP_WORDS = new Set([
   'you', 'your',
 ]);
 
-// "what was the last article I read", "most recent page I visited", ...
-const RECENT_INTENT = /\b(last|latest|recent(ly)?|previous|just)\b[^.?!]*\b(article|page|site|website|tab|thing|post|blog|video|read|visited|opened|browsed|saw|watched|saved|looked|search|searched|googled)\b|\bwhat (did|was) i (just )?(read|reading|visit|visited|look|looked|browse|browsed)\b/i;
-const SEARCH_PAGE = /(google|bing|duckduckgo|yahoo|ecosia|brave)\.[a-z.]+\/(search|\?q=)|[?&]q=/i;
-
 // Crude stemmer so "originate" also matches "origin/originated" and "founders" matches "founder".
 function stem(word) {
   for (const suf of ['ations', 'ation', 'ating', 'ated', 'ate', 'ing', 'ies', 'es', 'ed', 's']) {
@@ -1975,49 +1934,6 @@ function recordUrl(record) {
 
 function recordBody(record) {
   return String(record.content || '').replace(/^Source:\s*\S+\s*/i, '').trim();
-}
-
-// Pick the passages of a record that best match the question (instead of the first N chars).
-// Roughly 1,500 words total across the retrieved chunks - bestPassages below does the per-chunk
-// char budgeting (and quality ranking); this is a final word-count backstop for precision.
-const CONTEXT_WORD_BUDGET = 1500;
-const CONTEXT_CHAR_BUDGET = 8250;
-
-function capWords(text, maxWords) {
-  const words = String(text || '').split(/\s+/).filter(Boolean);
-  return words.length <= maxWords ? String(text || '').trim() : words.slice(0, maxWords).join(' ');
-}
-
-function bestPassages(body, words, maxChars) {
-  const chunks = body
-    .split(/\n{2,}|\n(?=[A-Z0-9])/)
-    .map((c) => c.trim())
-    .filter((c) => c.length > 30);
-  if (chunks.length === 0) return body.slice(0, maxChars);
-
-  const scored = chunks.map((c, i) => {
-    const lower = c.toLowerCase();
-    let score = 0;
-    for (const w of words) if (lower.includes(stem(w))) score += 1;
-    return { c, i, score };
-  });
-
-  const picked = scored
-    .filter((s) => s.score > 0)
-    .sort((a, b) => b.score - a.score || a.i - b.i)
-    .slice(0, 6)
-    .sort((a, b) => a.i - b.i);
-  const source = picked.length > 0 ? picked : scored.slice(0, 6);
-
-  let out = '';
-  for (const s of source) {
-    if (out.length + s.c.length > maxChars) {
-      out += s.c.slice(0, Math.max(0, maxChars - out.length));
-      break;
-    }
-    out += s.c + '\n\n';
-  }
-  return out.trim();
 }
 
 function trimAnswer(text) {
@@ -2054,29 +1970,11 @@ function oneSentence(text) {
 // "I could not find that", and the many ways a model says the same thing
 const NOT_FOUND_REPLY = /^(i )?(could not|couldn't|cannot|can't|do not|don't) (find|see)\b|^not[_ ]found\b|\b(not|n't)\s+(mentioned|provided|stated|specified|available|included|found|given)\b|\bno (information|mention|details?)\b|\b(text|passage|page|article)\s+(does not|doesn't|did not)\b/i;
 
-// "From your memory: <title>, <date>"
-function memoryLabel(record, now) {
-  const when = savedWhen(record, now);
-  return 'From your memory: ' + readableTitle(record, 60) + (when ? ', ' + when : '');
-}
-
 // ---------------------------------------------------------------------------
 // Time wording for answers. Saved times are stored in UTC; answers use the laptop's local time zone (IST).
 // ---------------------------------------------------------------------------
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const MONTH_INDEX = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
-const MONTH_RE = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
-const WEEKDAY_INDEX = {
-  sunday: 0, monday: 1, mon: 1, tuesday: 2, tue: 2, tues: 2, wednesday: 3, wed: 3,
-  thursday: 4, thu: 4, thur: 4, thurs: 4, friday: 5, fri: 5, saturday: 6,
-};
-
-function parseSavedTime(value) {
-  const d = new Date(String(value || '').replace(' ', 'T') + 'Z');
-  return isNaN(d.getTime()) ? null : d;
-}
-
 function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
@@ -2111,136 +2009,12 @@ function whenText(d, now) {
   return dateLabel(d, now) + ' at ' + dayPart(d.getHours());
 }
 
-// Saved files get an exact clock time even for older dates ("on 22 Sep at 11:54 AM"), unlike page
-// answers above, which round to a part of the day. A file arrived at a moment; a page was read over
-// one. Includes its own preposition so the sentence reads correctly either way.
-function fileWhenText(d, now) {
-  const ago = dayDiff(d, now);
-  if (ago <= 0) return 'today at ' + clockTime(d);
-  if (ago === 1) return 'yesterday at ' + clockTime(d);
-  return 'on ' + d.getDate() + ' ' + MONTH_SHORT[d.getMonth()] +
-    (d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : '') + ' at ' + clockTime(d);
-}
-
-// ---------------------------------------------------------------------------
-// File recall: "what PDF did I save", "the last 3 files I saved". These ask which files exist and
-// when they arrived - record metadata - rather than what is written inside them, so they are
-// answered straight from the record list, with no meaning-based or keyword search involved.
-// ---------------------------------------------------------------------------
-const FILE_NOUNS = /\b(file|files|pdf|pdfs|document|documents|doc|docs|attachment|attachments)\b/i;
-const FILE_RECALL_WORDS = /\b(save|saved|saving|upload|uploaded|attach|attached|added|recent|recently|last|latest)\b/i;
-const COUNT_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
-
-function isFileRecallQuestion(q) {
-  return FILE_NOUNS.test(q) && FILE_RECALL_WORDS.test(q);
-}
-
-// "last 3 files" / "three documents" -> that many; anything else -> just the most recent one.
-// The number has to sit directly in front of the file word, so "unit 3 chem" isn't read as a count.
-function askedFileCount(q) {
-  const m = q.match(/\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:most\s+recent\s+|recent\s+|last\s+|latest\s+)?(?:files?|pdfs?|documents?|docs?|attachments?)\b/i);
-  if (!m) return 1;
-  const raw = m[1].toLowerCase();
-  const n = COUNT_WORDS[raw] || parseInt(raw, 10);
-  return Number.isFinite(n) ? Math.min(Math.max(n, 1), 10) : 1;
-}
-
 // "File: 2026-09-22T11-54-28-432Z-unit 3 chem.pdf" -> "unit 3 chem.pdf"
 function attachmentDisplayName(formName) {
   return String(formName || '')
     .replace(/^File:\s*/i, '')
     .replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/, '') // the collision-proof upload stamp
     .trim();
-}
-
-// ---------------------------------------------------------------------------
-// Site filter, form records and topic helpers for /api/ask
-// ---------------------------------------------------------------------------
-const SITE_ALIASES = [
-  { word: 'wikipedia', label: 'Wikipedia', host: /(^|\.)wikipedia\.org$/ },
-  { word: 'youtube', label: 'YouTube', host: /(^|\.)(youtube\.com|youtu\.be)$/ },
-  { word: 'gmail', label: 'Gmail', host: /^mail\.google\.com$/ },
-  { word: 'google', label: 'Google', host: /(^|\.)google\.[a-z.]+$/ },
-  { word: 'github', label: 'GitHub', host: /(^|\.)github\.(com|io)$/ },
-  { word: 'reddit', label: 'Reddit', host: /(^|\.)reddit\.com$/ },
-  { word: 'linkedin', label: 'LinkedIn', host: /(^|\.)linkedin\.com$/ },
-  { word: 'twitter', label: 'Twitter', host: /(^|\.)(twitter\.com|x\.com)$/ },
-  { word: 'facebook', label: 'Facebook', host: /(^|\.)facebook\.com$/ },
-  { word: 'instagram', label: 'Instagram', host: /(^|\.)instagram\.com$/ },
-  { word: 'amazon', label: 'Amazon', host: /(^|\.)amazon\.[a-z.]+$/ },
-  { word: 'flipkart', label: 'Flipkart', host: /(^|\.)flipkart\.com$/ },
-  { word: 'stackoverflow', label: 'Stack Overflow', host: /(^|\.)stackoverflow\.com$/ },
-  { word: 'quora', label: 'Quora', host: /(^|\.)quora\.com$/ },
-  { word: 'medium', label: 'Medium', host: /(^|\.)medium\.com$/ },
-  { word: 'netflix', label: 'Netflix', host: /(^|\.)netflix\.com$/ },
-  { word: 'chatgpt', label: 'ChatGPT', host: /(^|\.)(chatgpt\.com|openai\.com)$/ },
-];
-
-function hostOf(url) {
-  try { return new URL(url).hostname.toLowerCase(); } catch (_) { return ''; }
-}
-
-// If the question names a site ("on wikipedia", "on youtube.com"), return how to recognise its pages
-function detectSite(q) {
-  for (const s of SITE_ALIASES) {
-    if (new RegExp('\\b' + s.word + '\\b').test(q)) return { label: s.label, strip: [s.word], test: (h) => s.host.test(h) };
-  }
-  const m = q.match(/\b((?:[a-z0-9-]+\.)+(?:com|org|net|io|edu|gov|in|co|ai|app|dev))\b/);
-  if (m) {
-    const domain = m[1].replace(/^www\./, '');
-    return {
-      label: domain,
-      strip: domain.split('.'),
-      test: (h) => h === domain || h.endsWith('.' + domain),
-    };
-  }
-  return null;
-}
-
-// Records made from the "Save this form?" panel; they are never "pages I read"
-function isFormRecord(record) {
-  return /^form:/i.test(String(record.form_name || ''));
-}
-
-// Words that describe the kind of question, not its topic
-const QUESTION_ONLY_WORDS = new Set([
-  'thing', 'things', 'post', 'posts', 'blog', 'site', 'sites', 'tab', 'tabs', 'video', 'videos', 'watch',
-  'watched', 'watching', 'open', 'opened', 'browse', 'browsed', 'visit', 'look', 'looked', 'search',
-  'searched', 'googled', 'most', 'just', 'previous', 'before', 'after', 'immediately', 'first', 'next',
-  'doing', 'website', 'websites', 'reading', 'wikipedia', 'youtube', 'gmail', 'one', 'ago', 'tell',
-  'today', 'yesterday', 'tonight', 'morning', 'afternoon', 'evening', 'night',
-  'summarize', 'summarise', 'summary', 'explain', 'describe', 'earlier', 'again',
-]);
-
-function topicWords(q, site) {
-  const skip = new Set(site ? site.strip : []);
-  return [...new Set(
-    q.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
-      .filter((w) => w.length > 1 && !ASK_STOP_WORDS.has(w) && !QUESTION_ONLY_WORDS.has(w) && !skip.has(w))
-  )];
-}
-
-function wordRegexes(words) {
-  return words.map((w) => new RegExp('\\b' + stem(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
-}
-
-function neededMatches(n) {
-  return n === 1 ? 1 : Math.min(n, Math.max(2, Math.ceil(n / 2)));
-}
-
-// How many topic words a record mentions (title, address or body)
-function topicHits(record, regs) {
-  const hay = recordTitle(record) + '\n' + recordUrl(record) + '\n' + recordBody(record);
-  return regs.filter((re) => re.test(hay)).length;
-}
-
-function savedWhen(record, now) {
-  const t = parseSavedTime(record.last_updated);
-  return t ? whenText(t, now) : '';
-}
-
-function capitalize(s) {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // "Elon Musk - Wikipedia (en.wikipedia.org)" -> "Elon Musk (Wikipedia)"
@@ -2252,58 +2026,6 @@ function readableTitle(record, maxLen) {
   return t.length > limit ? t.slice(0, limit - 3) + '...' : t;
 }
 
-// Local date from parts; with no year it is this year, or last year if that date is still in the future
-function buildDate(year, month, day, now) {
-  let y = year == null ? now.getFullYear() : year;
-  if (y < 100) y += 2000;
-  let date = new Date(y, month, day);
-  if (date.getMonth() !== month || date.getDate() !== day) return null;
-  if (year == null && startOfDay(date) > startOfDay(now)) date = new Date(y - 1, month, day);
-  return date;
-}
-
-// Finds "yesterday", "Thursday", "17 Sep", "17/09", "last night", ... (plus an optional part of the day)
-function parseDayRequest(q, now) {
-  const partMatch = q.match(/\b(morning|afternoon|evening|night|tonight)\b/);
-  let part = partMatch ? (partMatch[1] === 'tonight' ? 'night' : partMatch[1]) : null;
-  const today = startOfDay(now);
-  const daysAgo = (n) => new Date(today.getFullYear(), today.getMonth(), today.getDate() - n);
-  let date = null;
-  let m;
-
-  if (/\blast night\b/.test(q)) {
-    date = daysAgo(1);
-    part = 'night';
-  } else if (/\byesterday\b/.test(q)) {
-    date = daysAgo(1);
-  } else if (/\b(today|tonight)\b|\bthis (morning|afternoon|evening)\b/.test(q)) {
-    date = today;
-  } else if ((m = q.match(new RegExp('\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(' + MONTH_RE + ')\\b(?:,?\\s+(\\d{4}))?')))) {
-    date = buildDate(m[3] ? +m[3] : null, MONTH_INDEX[m[2].slice(0, 3)], +m[1], now);
-  } else if ((m = q.match(new RegExp('\\b(' + MONTH_RE + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s+(\\d{4}))?')))) {
-    date = buildDate(m[3] ? +m[3] : null, MONTH_INDEX[m[1].slice(0, 3)], +m[2], now);
-  } else if ((m = q.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/))) {
-    date = buildDate(+m[1], +m[2] - 1, +m[3], now);
-  } else if ((m = q.match(/\b(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?\b/))) {
-    date = buildDate(m[3] ? +m[3] : null, +m[2] - 1, +m[1], now); // day/month, the Indian way
-  } else if ((m = q.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|mon|tues?|wed|thu|thurs?|fri)\b/))) {
-    date = daysAgo((today.getDay() - WEEKDAY_INDEX[m[1]] + 7) % 7); // the most recent such day, today included
-  }
-
-  return date ? { date, part } : null;
-}
-
-// "today", "yesterday night", "this morning", "on Thursday, 17 Sep at night"
-function dayPhrase(date, part, now) {
-  const ago = dayDiff(date, now);
-  if (ago === 0) return part ? (part === 'night' ? 'tonight' : 'this ' + part) : 'today';
-  if (ago === 1) return part ? 'yesterday ' + part : 'yesterday';
-  return 'on ' + dateLabel(date, now) + (part ? (part === 'night' ? ' at night' : ' in the ' + part) : '');
-}
-
-const LAST_ONE_QUESTION = /\b(last|latest|most recent|previous)\s+(article|page|site|website|tab|thing|post|blog)\b/;
-const DAY_QUESTION = /\b(doing|did i|was i|read|reading|visit(?:ed)?|brows(?:e|ed|ing)|look(?:ed|ing)|saw|watch(?:ed|ing)?|search(?:ed)?|pages?|sites?|websites?|articles?|saved|opened)\b/;
-
 // ---------------------------------------------------------------------------
 // INSTANT ANSWERS: time/date/day, answered with zero LLM calls. Typo/one-word forms
 // ("tym", "wat time", "dat") are matched too, since these get typed in a hurry.
@@ -2314,7 +2036,7 @@ const INSTANT_DATE_RE = /^\s*(?:wh?at'?s?\s+)?(?:today'?s?\s+|the\s+)?da?te?\s*\
 const INSTANT_DAY_RE = /^\s*(?:wh?at\s+)?day\s+is\s+it\s*\??\s*$|^\s*wh?at\s+day\s*(?:is\s+(?:it|today))?\s*\??\s*$/i;
 
 // "and before that?" / "what about after that" has no topic of its own - resolve it against the
-// last assistant turn's quoted page title, into the same shape resolveSequenceQuestion expects
+// last assistant turn's quoted page title, into the same shape Smart Recall's time-order route expects
 // ("the page before/after X"). Shared by POST /api/ask and GET /api/ask/stream.
 const FOLLOW_UP_RE = /^(?:and\s+|what\s+about\s+)*(before|after)\s+that\??$/;
 function resolveFollowUpQuestion(cleanQuestion, history) {
@@ -2323,68 +2045,11 @@ function resolveFollowUpQuestion(cleanQuestion, history) {
   const dir = followUpMatch[1];
   const lastAssistant = [...history].reverse()
     .find((m) => m && m.role === 'assistant' && typeof m.text === 'string');
-  const quoted = lastAssistant && lastAssistant.text.match(/"([^"]{3,120})"/);
+  // The LAST quoted title is the one the answer ended on: in 'Right before "X", you were reading
+  // "Y"', "before that" means before Y.
+  const quotes = lastAssistant ? [...lastAssistant.text.matchAll(/"([^"]{3,120})"/g)] : [];
+  const quoted = quotes.length ? quotes[quotes.length - 1] : null;
   return quoted ? `the page ${dir} ${quoted[1]}`.toLowerCase() : cleanQuestion;
-}
-
-// "What did I read before/after X?" -> find X, then the page saved right before/after it.
-// Deterministic, no LLM call. Returns a ready response, or null if the question isn't this shape.
-function resolveSequenceQuestion(cleanQuestion, readPages, now) {
-  const seqMatch = cleanQuestion.match(/^(.*?)\b(before|after)\b\s+(.+)$/);
-  if (!seqMatch || !/\b(read|reading|visited|opened|saw|saved|watched|browsed|page|article|site|tab|video|thing)\b/.test(seqMatch[1])) {
-    return null;
-  }
-  const dir = seqMatch[2];
-  const headSite = detectSite(seqMatch[1]);
-  const tailSite = detectSite(seqMatch[3]);
-  const words = topicWords(seqMatch[3], tailSite);
-  if (words.length === 0) {
-    return { found: false, message: 'Tell me which page you mean, e.g. "What did I read before the Elon Musk article?"' };
-  }
-
-  // Locate X: the page whose title/address/text matches the words after "before"/"after"
-  const regs = wordRegexes(words);
-  const need = neededMatches(words.length);
-  let anchorIdx = -1;
-  let anchorScore = 0;
-  readPages.forEach((r, i) => {
-    if (tailSite && !tailSite.test(hostOf(recordUrl(r)))) return;
-    if (topicHits(r, regs) < need) return;
-    const title = recordTitle(r);
-    const score = regs.filter((re) => re.test(title)).length * 25 + topicHits(r, regs);
-    if (score > anchorScore) { anchorScore = score; anchorIdx = i; } // newest wins ties
-  });
-  if (anchorIdx < 0) {
-    return { found: false, message: "I couldn't find a saved page about \"" + words.join(' ') + '" to work from.' };
-  }
-
-  // readPages is newest-first: "after" = newer neighbour, "before" = older neighbour
-  const anchor = readPages[anchorIdx];
-  let neighbour = null;
-  for (let i = anchorIdx + (dir === 'after' ? -1 : 1); i >= 0 && i < readPages.length; i += dir === 'after' ? -1 : 1) {
-    if (!headSite || headSite.test(hostOf(recordUrl(readPages[i])))) { neighbour = readPages[i]; break; }
-  }
-  const anchorWhen = savedWhen(anchor, now);
-  if (!neighbour) {
-    return {
-      found: false,
-      message: 'I have no saved page ' + (dir === 'after' ? 'after' : 'before') + ' "' + readableTitle(anchor) + '"' + (anchorWhen ? ' (saved ' + anchorWhen + ')' : '') + '.',
-    };
-  }
-  const nWhen = savedWhen(neighbour, now);
-  return {
-    found: true,
-    kind: 'sequence',
-    source: 'memory',
-    source_label: memoryLabel(neighbour, now),
-    title: recordTitle(neighbour),
-    answer: (dir === 'after' ? 'Right after' : 'Right before') + ' "' + readableTitle(anchor) + '"' +
-      (anchorWhen ? ' (' + anchorWhen + ')' : '') + ', you read "' + readableTitle(neighbour) + '"' +
-      (nWhen ? ', saved ' + nWhen : '') + '.',
-    source_url: recordUrl(neighbour),
-    form_name: neighbour.form_name,
-    last_updated: neighbour.last_updated,
-  };
 }
 
 function instantResult(answer) {
@@ -2411,6 +2076,64 @@ function instantAnswer(rawQuestion) {
     return instantResult(`Today is ${fmt({ weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}.`);
   }
   return null;
+}
+
+// Where a saved file lives on disk: uploads keep their stamped name in rash-attachments/, inbox
+// files keep their path relative to rash-inbox/.
+function filePathFor(record) {
+  const stored = String(record.form_name || '').replace(/^File:\s*/i, '');
+  return /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/.test(stored) ? path.join(attachmentsDir, stored) : path.join(inboxDir, stored);
+}
+
+// Smart Recall v2 (smart-recall.js): routes and answers every memory question. Initialised here,
+// after every constant it depends on is defined.
+smartRecall.init({
+  db,
+  helpers: {
+    recordTitle, recordUrl, recordBody, attachmentDisplayName, trimAnswer, summarizeRecord, filePathFor,
+    isNotFoundReply: (text) => NOT_FOUND_REPLY.test(text),
+  },
+});
+
+// Loads the answer model right after startup, with the same num_ctx every answer uses, so the first
+// question doesn't also pay for reading the model from disk. Best effort: if Ollama is off this
+// just logs once.
+//
+// Then, while RaSh runs, both models get a tiny request every KEEP_WARM_EVERY_MS. keep_alive alone
+// wasn't enough: Ollama memory-maps the weights, and on an idle, memory-tight laptop Windows pages
+// them out even though Ollama still lists the model as loaded - the next question then re-reads
+// gigabytes from disk (measured: a 4-minute first answer). Generating one token runs the whole model
+// once, which pulls the weights back into RAM and refreshes keep_alive at the same time.
+async function warmModels(first) {
+  const { ANSWER_MODEL, EMBED_MODEL, KEEP_ALIVE, ANSWER_NUM_CTX } = searchIndex.CONFIG;
+  const t0 = Date.now();
+  const post = (route, body, ms) => fetch('http://127.0.0.1:11434' + route, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(ms),
+  }).then((r) => r.ok).catch(() => false);
+  const [answerOk, embedOk] = await Promise.all([
+    post('/api/generate', { model: ANSWER_MODEL, prompt: '.', stream: false, keep_alive: KEEP_ALIVE, options: { num_ctx: ANSWER_NUM_CTX, num_predict: 1, temperature: 0 } }, 180000),
+    post('/api/embed', { model: EMBED_MODEL, input: 'warm', keep_alive: KEEP_ALIVE }, 60000),
+  ]);
+  const was = answerModelState;
+  answerModelState = answerOk ? 'ready' : 'unavailable';
+  if (first) {
+    console.log(answerOk
+      ? `[Ask] Answer model ${ANSWER_MODEL} loaded in ${Date.now() - t0} ms; kept warm while RaSh runs.`
+      : `[Ask] Could not load ${ANSWER_MODEL}; is Ollama running?`);
+  } else if (was !== answerModelState) {
+    console.log(answerOk ? `[Ask] Answer model ${ANSWER_MODEL} is available again.` : `[Ask] Answer model ${ANSWER_MODEL} is not responding.`);
+  }
+  if (!embedOk && first) console.warn(`[Ask] Could not load ${EMBED_MODEL}; questions will use keyword search until it is back.`);
+}
+let answerModelState = 'loading';
+
+function startKeepWarm() {
+  warmModels(true);
+  const timer = setInterval(() => warmModels(false), searchIndex.CONFIG.KEEP_WARM_EVERY_MS);
+  if (timer.unref) timer.unref();
 }
 
 // While a question is being answered (/api/ask and /api/ask/stream), the index worker waits, so
@@ -2509,286 +2232,21 @@ app.post('/api/ask', async (req, res) => {
   }
 
   try {
-    const records = isUnlocked
-      ? db.prepare('SELECT * FROM records ORDER BY last_updated DESC, id DESC').all()
-      : db.prepare('SELECT * FROM records WHERE is_sensitive = 0 ORDER BY last_updated DESC, id DESC').all();
-
     // Conversation follow-ups ("and before that?") have no topic of their own - resolve them
-    // against the last assistant turn's quoted page title, into the exact same "page before/after
-    // X" shape a fully-spelled-out question would produce.
+    // against the last assistant turn's quoted title, into the same "page before/after X" shape a
+    // fully-spelled-out question would produce. Then Smart Recall routes and answers it.
     const cleanQuestion = resolveFollowUpQuestion(question.toLowerCase().trim(), history);
-
-    const now = new Date();
-
-    // File recall runs before everything else. Both the recency branch ("last ... saved") and the
-    // day branch would otherwise swallow these questions and answer about web pages instead - and
-    // the day branch can't see files at all, since it only considers records that have a URL.
-    if (isFileRecallQuestion(cleanQuestion)) {
-      const fileRecords = records.filter((r) => /^File:/i.test(String(r.form_name || '')));
-      if (fileRecords.length === 0) {
-        return res.json({ found: false, message: "You haven't saved any files yet." });
-      }
-
-      const chosen = fileRecords.slice(0, askedFileCount(cleanQuestion)); // records are newest-first
-      const described = chosen.map((r) => {
-        const savedAt = parseSavedTime(r.last_updated);
-        return attachmentDisplayName(r.form_name) + (savedAt ? ' ' + fileWhenText(savedAt, now) : '');
-      });
-
-      const newest = chosen[0];
-      return res.json({
-        found: true,
-        kind: 'files_saved',
-        source: 'memory',
-        source_label: 'From your memory: ' + fileRecords.length + (fileRecords.length === 1 ? ' saved file' : ' saved files'),
-        title: attachmentDisplayName(newest.form_name),
-        answer: chosen.length === 1
-          ? 'You saved ' + described[0] + '.'
-          : 'You saved these ' + chosen.length + ' files:\n' + described.map((d) => '• ' + d).join('\n'),
-        source_url: '',
-        form_name: newest.form_name,
-        last_updated: newest.last_updated,
-      });
-    }
-
-    // Site filter: "...on wikipedia" only ever returns pages from that site
-    const site = detectSite(cleanQuestion);
-    const inSite = (r) => !site || site.test(hostOf(recordUrl(r)));
-    const noSiteMessage = () => "I don't have any saved pages from " + site.label + '.';
-    // Pages that were read: have a web address, and are never form records
-    const readPages = records.filter((r) => recordUrl(r) && !isFormRecord(r));
-
-    // 0a) "What did I read before/after X?" -> find X, then the page saved right before/after it.
-    // Also how "and before that?" resolves, once the follow-up rewrite above has filled in X from
-    // the last assistant turn - shared with the streaming endpoint so both give the same answer.
-    const seqResult = resolveSequenceQuestion(cleanQuestion, readPages, now);
-    if (seqResult) return res.json(seqResult);
-
-    // 0) "What was I doing on Thursday (at night)?" -> every saved page from that day, with its time
-    const dayReq = LAST_ONE_QUESTION.test(cleanQuestion) ? null : parseDayRequest(cleanQuestion, now);
-    if (dayReq && DAY_QUESTION.test(cleanQuestion)) {
-      const phrase = dayPhrase(dayReq.date, dayReq.part, now);
-      const dayPages = readPages
-        .filter(inSite)
-        .map((r) => ({ r, t: parseSavedTime(r.last_updated) }))
-        .filter((x) => x.t && dayDiff(x.t, dayReq.date) === 0 && (!dayReq.part || dayPart(x.t.getHours()) === dayReq.part))
-        .sort((a, b) => a.t - b.t);
-
-      if (dayPages.length === 0) {
-        return res.json({ found: false, message: "I don't have any saved pages from " + phrase + '.' });
-      }
-
-      const shown = dayPages.slice(0, 10);
-      const lines = shown.map((x) => '• ' + clockTime(x.t) + ' – ' + readableTitle(x.r, 70));
-      if (dayPages.length > shown.length) lines.push('...and ' + (dayPages.length - shown.length) + ' more.');
-      const newest = dayPages[dayPages.length - 1].r;
-
-      return res.json({
-        found: true,
-        kind: 'day',
-        source: 'memory',
-        source_label: 'From your memory: ' + dayPages.length + (dayPages.length === 1 ? ' page' : ' pages') + ', ' + phrase,
-        title: capitalize(phrase),
-        answer: capitalize(phrase) + ' you read ' + dayPages.length + (dayPages.length === 1 ? ' page' : ' pages') + ':\n' + lines.join('\n'),
-        source_url: '',
-        form_name: newest.form_name,
-        last_updated: newest.last_updated,
-      });
-    }
-
-    // 1) "What was the last article I read?" -> most recently captured web page, with its exact time
-    const recentTopic = topicWords(cleanQuestion, site);
-    const asksLatest = /\b(last|latest|most recent)\b/.test(cleanQuestion);
-    if (RECENT_INTENT.test(cleanQuestion) || (site && (asksLatest || recentTopic.length === 0))) {
-      const wantsSearch = /\b(search|searched|google|googled)\b/.test(cleanQuestion);
-      let pages = readPages.filter(inSite); // newest saved first
-      if (site && pages.length === 0) return res.json({ found: false, message: noSiteMessage() });
-
-      // "last article about X": only pages that are actually about X
-      if (recentTopic.length > 0) {
-        const regs = wordRegexes(recentTopic);
-        const need = neededMatches(recentTopic.length);
-        pages = pages.filter((r) => topicHits(r, regs) >= need);
-        if (pages.length === 0) {
-          return res.json({ found: false, message: 'I could not find a saved page about that.' });
-        }
-      }
-      const preferred = wantsSearch ? pages : pages.filter((r) => !SEARCH_PAGE.test(recordUrl(r)));
-      const list = preferred.length > 0 ? preferred : pages;
-      const latest = list[0];
-
-      if (!latest) {
-        return res.json({ found: false, message: "I don't have any saved pages yet." });
-      }
-      {
-        const t1 = parseSavedTime(latest.last_updated);
-        let answer = '';
-
-        if (t1) {
-          answer = capitalize(whenText(t1, now)) + ' you were reading ' + readableTitle(latest) + '.';
-          const prev = list[1];
-          const t2 = prev ? parseSavedTime(prev.last_updated) : null;
-          if (t2) {
-            // Same recent day: just the clock time; otherwise spell out the day
-            const prevWhen = dayDiff(t1, now) <= 1 && dayDiff(t2, t1) === 0 ? 'at ' + clockTime(t2) : whenText(t2, now);
-            answer += ' Before that, ' + prevWhen + ', you read ' + readableTitle(prev) + '.';
-          }
-        }
-        if (!t1 || /\bsummar/.test(cleanQuestion)) {
-          const summary = await summarizeRecord(latest);
-          if (summary) answer = answer ? answer + '\n\n' + summary : summary;
-        }
-        if (!answer) return res.json({ found: false, message: 'I could not find that.' });
-
-        return res.json({
-          found: true,
-          kind: 'recent',
-          source: 'memory',
-          source_label: memoryLabel(latest, now),
-          title: recordTitle(latest),
-          answer,
-          source_url: recordUrl(latest),
-          form_name: latest.form_name,
-          last_updated: latest.last_updated,
-        });
-      }
-    }
-
-    // 2) Normal question -> find the best memory by real keyword relevance
-    const siteWords = new Set(site ? site.strip : []);
-    const queryWords = [...new Set(
-      cleanQuestion
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .split(/\s+/)
-        .filter((w) => w.length > 1 && !ASK_STOP_WORDS.has(w) && !siteWords.has(w))
-    )];
-
-    // Candidate memories: only the named site's pages, and never form records for "what did I read" questions
-    const asksRead = /\b(read|reading|visited|browsed|article|articles|page|pages|website|websites)\b/.test(cleanQuestion);
-    if (site && !records.some((r) => recordUrl(r) && inSite(r))) {
-      return res.json({ found: false, message: noSiteMessage() });
-    }
-    const pool = records.filter((r) => (site ? recordUrl(r) && inSite(r) : !(asksRead && isFormRecord(r))));
-
-    if (queryWords.length === 0) {
-      return res.json({
-        found: false,
-        message: 'Try asking with a specific name or topic, e.g. "Who is Mark Zuckerberg?"',
-      });
-    }
-
-    // Search by meaning first: this finds a record that is about the question even when it shares
-    // no keywords with it. If the embedding model can't be reached, fall through to the keyword
-    // scoring below instead of failing the question outright.
-    let bestMatch = null;
-    let contextRecords = [];
-
-    const semantic = await findRecordsByMeaning(question, pool, 3); // top 3 chunks only, see CONTEXT_WORD_BUDGET below
-    if (semantic.ok) {
-      if (semantic.matches.length === 0) {
-        // The search worked and nothing was close enough; don't guess with a loosely-related page.
-        return res.json({
-          found: false,
-          message: 'I could not find anything about that in your saved memories.',
-        });
-      }
-      contextRecords = semantic.matches.map((m) => m.record);
-      bestMatch = contextRecords[0];
-    }
-
-    const wordRes = queryWords.map((w) => new RegExp('\\b' + stem(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
-    const needed = queryWords.length === 1 ? 1 : Math.min(queryWords.length, Math.max(2, Math.ceil(queryWords.length / 2)));
-    const wantsSearchPage = /\b(search|searched|google|googled)\b/.test(cleanQuestion);
-
-    let highestScore = 0;
-
-    for (const record of bestMatch ? [] : pool) {
-      const title = recordTitle(record).toLowerCase();
-      const body = recordBody(record).toLowerCase();
-      let matched = 0;
-      let score = 0;
-
-      for (let i = 0; i < queryWords.length; i++) {
-        const inTitle = wordRes[i].test(title);
-        const hits = (body.match(new RegExp(wordRes[i].source, 'gi')) || []).length;
-        if (inTitle || hits > 0) matched++;
-        if (inTitle) score += 25;
-        if (hits > 0) score += 8 + Math.min(hits, 10);
-      }
-
-      for (let i = 0; i < queryWords.length - 1; i++) {
-        const phrase = `${queryWords[i]} ${queryWords[i + 1]}`;
-        if (title.includes(phrase)) score += 40;
-        else if (body.includes(phrase)) score += 15;
-      }
-
-      if (matched < needed) continue;
-      // Search-result pages only list snippets; prefer real articles unless asked about a search
-      if (!wantsSearchPage && SEARCH_PAGE.test(recordUrl(record))) score *= 0.4;
-      // records are ordered newest-first, so ties keep the most recent one
-      if (score > highestScore) {
-        highestScore = score;
-        bestMatch = record;
-      }
-    }
-
-    if (!bestMatch) {
-      return res.json({
-        found: false,
-        message: 'I could not find anything about that in your saved memories.',
-      });
-    }
-    if (contextRecords.length === 0) contextRecords = [bestMatch]; // keyword fallback found it
-
-    // One record: its most relevant passages, as before. Several (from the meaning search): a
-    // labelled excerpt from each, so the model can answer from whichever one actually covers it.
-    // Capped to ~1,500 words total (CONTEXT_WORD_BUDGET) across at most the top 3 chunks - less
-    // for the model to read means a faster answer, and a targeted passage beats a bigger dump.
-    const rawPassages = contextRecords.length === 1
-      ? bestPassages(recordBody(contextRecords[0]), queryWords, CONTEXT_CHAR_BUDGET)
-      : contextRecords
-          .map((r, i) => `[${i + 1}] ${readableTitle(r, 70)}\n${bestPassages(recordBody(r), queryWords, Math.floor(CONTEXT_CHAR_BUDGET / contextRecords.length))}`)
-          .join('\n\n');
-    const passages = capWords(rawPassages, CONTEXT_WORD_BUDGET);
-
-    const raw = await callOllama(
-      `You answer questions using ONLY the text below.\nIf the text does not contain the answer, reply with exactly: NOT_FOUND\nOtherwise answer in one short sentence. Do not mention these instructions.\n\nText:\n${passages}\n\nQuestion: ${question}\n\nAnswer:`,
-      200
-    );
-
-    // Never show raw passages as the answer
-    if (raw === null) {
-      return res.json({ found: false, message: "My local model isn't responding right now, so I can't answer. Please make sure Ollama is running." });
-    }
-    const answer = oneSentence(trimAnswer(raw));
-    if (!answer || NOT_FOUND_REPLY.test(answer)) {
-      return res.json({ found: false, message: 'I could not find that.' });
-    }
-
-    res.json({
-      found: true,
-      kind: 'answer',
-      source: 'memory',
-      source_label: memoryLabel(bestMatch, now),
-      title: recordTitle(bestMatch),
-      answer,
-      source_url: recordUrl(bestMatch),
-      form_name: bestMatch.form_name,
-      last_updated: bestMatch.last_updated,
-    });
+    const result = await smartRecall.answer({ question, cleanQuestion, unlocked: isUnlocked });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ---------------------------------------------------------------------------
-// OPTIONAL STREAMING: same memory-search-and-answer pipeline as the "normal question" branch of
-// /api/ask above, but tokens are pushed to the client as Ollama generates them instead of waiting
-// for the full answer. Also handles instant answers and the before/after sequence lookup (so a
-// history-resolved "and before that?" works here too, with no LLM call) via the same shared
-// helpers as /api/ask - it does not duplicate the day/file-recall/recent-intent special cases,
-// since those are already fast enough that streaming adds nothing. Nothing in the existing widget
-// calls this by default; POST /api/ask stays the non-streaming fallback path.
+// STREAMING: the same Smart Recall pipeline as POST /api/ask, as server-sent events. Answers that
+// come straight from the data (instant, time order, lists, files) arrive as one "done" event; a
+// model-written answer streams its tokens first. POST /api/ask stays the non-streaming path.
 // ---------------------------------------------------------------------------
 app.get('/api/ask/stream', async (req, res) => {
   if (!isLocalRequest(req)) return res.status(403).json({ error: 'Not allowed.' });
@@ -2805,94 +2263,26 @@ app.get('/api/ask/stream', async (req, res) => {
     Connection: 'keep-alive',
   });
   const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  const finish = (payload) => { send('done', payload); res.end(); };
 
   const instant = instantAnswer(question);
-  if (instant) return finish(instant);
+  if (instant) {
+    send('done', instant);
+    return res.end();
+  }
 
   try {
-    const isUnlocked = vaultUnlocked(req);
-    const records = isUnlocked
-      ? db.prepare('SELECT * FROM records ORDER BY last_updated DESC, id DESC').all()
-      : db.prepare('SELECT * FROM records WHERE is_sensitive = 0 ORDER BY last_updated DESC, id DESC').all();
-
     const cleanQuestion = resolveFollowUpQuestion(question.toLowerCase().trim(), history);
-    const readPages = records.filter((r) => recordUrl(r) && !isFormRecord(r));
-    const seqResult = resolveSequenceQuestion(cleanQuestion, readPages, new Date());
-    if (seqResult) return finish(seqResult);
-    const queryWords = [...new Set(
-      cleanQuestion.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 1 && !ASK_STOP_WORDS.has(w))
-    )];
-    if (queryWords.length === 0) {
-      return finish({ found: false, message: 'Try asking with a specific name or topic, e.g. "Who is Mark Zuckerberg?"' });
-    }
-
-    const semantic = await findRecordsByMeaning(question, records, 3);
-    const contextRecords = semantic.ok ? semantic.matches.map((m) => m.record) : [];
-    const bestMatch = contextRecords[0] || null;
-    if (!bestMatch) {
-      return finish({ found: false, message: 'I could not find anything about that in your saved memories.' });
-    }
-
-    const rawPassages = contextRecords.length === 1
-      ? bestPassages(recordBody(contextRecords[0]), queryWords, CONTEXT_CHAR_BUDGET)
-      : contextRecords
-          .map((r, i) => `[${i + 1}] ${readableTitle(r, 70)}\n${bestPassages(recordBody(r), queryWords, Math.floor(CONTEXT_CHAR_BUDGET / contextRecords.length))}`)
-          .join('\n\n');
-    const passages = capWords(rawPassages, CONTEXT_WORD_BUDGET);
-    const prompt = `You answer questions using ONLY the text below.\nIf the text does not contain the answer, reply with exactly: NOT_FOUND\nOtherwise answer in one short sentence. Do not mention these instructions.\n\nText:\n${passages}\n\nQuestion: ${question}\n\nAnswer:`;
-
-    const controller = new AbortController();
-    req.on('close', () => controller.abort());
-    const timer = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
-    let full = '';
-    try {
-      const response = await fetch('http://127.0.0.1:11434/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: OLLAMA_MODEL, prompt, stream: true, options: { temperature: 0.1, num_predict: 200, num_ctx: 4096 } }),
-        signal: controller.signal,
-      });
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let idx;
-        while ((idx = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 1);
-          if (!line.trim()) continue;
-          const obj = JSON.parse(line);
-          if (obj.response) { full += obj.response; send('token', { text: obj.response }); }
-        }
-      }
-    } catch (err) {
-      clearTimeout(timer);
-      return finish({ found: false, message: "My local model isn't responding right now, so I can't answer. Please make sure Ollama is running." });
-    }
-    clearTimeout(timer);
-
-    const answer = oneSentence(trimAnswer(full));
-    if (!answer || NOT_FOUND_REPLY.test(answer)) {
-      return finish({ found: false, message: 'I could not find that.' });
-    }
-    finish({
-      found: true,
-      kind: 'answer',
-      source: 'memory',
-      source_label: memoryLabel(bestMatch, new Date()),
-      title: recordTitle(bestMatch),
-      answer,
-      source_url: recordUrl(bestMatch),
-      form_name: bestMatch.form_name,
-      last_updated: bestMatch.last_updated,
+    const result = await smartRecall.answer({
+      question,
+      cleanQuestion,
+      unlocked: vaultUnlocked(req),
+      onToken: (text) => send('token', { text }),
     });
+    send('done', result);
   } catch (err) {
-    finish({ found: false, error: err.message });
+    send('done', { found: false, error: err.message });
   }
+  res.end();
 });
 
 // mcp-server.js exposes the same records to MCP clients (Cursor, etc.). It is a separate
@@ -2934,6 +2324,8 @@ app.get('/api/system', (req, res) => {
   res.json({
     tier: HARDWARE_TIER,
     model: OLLAMA_MODEL,
+    answerModel: searchIndex.CONFIG.ANSWER_MODEL, // Smart Recall's /api/ask answers
+    answerModelState, // 'loading' | 'ready' | 'unavailable' (startup preload)
     ramGB: Math.round(os.totalmem() / (1024 ** 3)),
   });
 });
@@ -3213,6 +2605,7 @@ const server = app.listen(PORT, () => {
   // Catch up on any record that has no embedding yet (old records, or ones saved while Ollama
   // was down). Runs in the background; the server is already answering requests.
   sweepMissingEmbeddings();
+  startKeepWarm();
 
   if (TEST_MODE) {
     console.log('[RaSh] Test mode: inbox watcher, file scan, MCP server and scheduled digest are off.');

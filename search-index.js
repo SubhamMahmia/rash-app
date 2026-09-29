@@ -18,12 +18,35 @@ const CONFIG = {
   OLLAMA_URL: 'http://127.0.0.1:11434',
   EMBED_MODEL: process.env.RASH_EMBED_MODEL || 'nomic-embed-text',
   EMBED_DIMS: 768,
-  ANSWER_MODEL: process.env.RASH_ANSWER_MODEL || 'llama3.1:8b',
+  // llama3.2:3b by default: on this CPU-only laptop it is about twice as fast as llama3.1:8b, and
+  // at 2.6 GB (vs 5.6 GB) it is the same model the rest of RaSh already uses, so only one LLM ever
+  // has to stay in memory. Set RASH_ANSWER_MODEL=llama3.1:8b for the bigger model.
+  ANSWER_MODEL: process.env.RASH_ANSWER_MODEL || 'llama3.2:3b',
+  // One num_ctx for every call to the answer model, from any part of RaSh: a different value makes
+  // Ollama unload and reload it (measured: 8.3 s each time). 6144 because page summaries need it.
+  ANSWER_NUM_CTX: 6144,
+  ANSWER_NUM_PREDICT: 160, // 1-3 sentences
+  ANSWER_TIMEOUT_MS: Number(process.env.RASH_ANSWER_TIMEOUT_MS) || 60000,
+  // Memory text sent to the model, in (estimated) tokens. Lowest-ranked memories are dropped first.
+  MEMORY_TOKEN_BUDGET: 600,
+  // While RaSh runs, the answer and embedding models get a tiny request this often, so they are
+  // never unloaded (keep_alive is 30 min) and Windows doesn't page their weights out while idle.
+  KEEP_WARM_EVERY_MS: 10 * 60 * 1000,
+  // Besides the best match, only memories within this much similarity of it go to the model
+  // (or ones matching every topic word).
+  SIM_MARGIN: 0.08,
   CHUNK_WORDS: 250,
   CHUNK_OVERLAP: 40,
   MAX_CHUNKS_PER_RECORD: 200, // a huge PDF shouldn't monopolise the worker; the first 200 chunks cover ~50k words
-  TOP_K: 4,
-  RELEVANCE_FLOOR: 0.5, // cosine similarity; placeholder until phase 4 tunes it with the eval
+  // The 1,200-token memory budget usually fits ~3 chunks, so TOP_K mostly caps the candidates.
+  TOP_K: Number(process.env.RASH_TOP_K) || 4,
+  // Cosine similarity a record's best chunk needs to count as a match (unless enough of the
+  // question's topic words match instead). Measured over the eval fixtures: 17 answerable questions
+  // scored 0.603-0.859 (the 0.603 one also matched 3/3 keywords; the lowest similarity-only pass was
+  // 0.626), 12 not-in-memory questions scored 0.469-0.607. 0.61 keeps every answerable one and
+  // rejects every unanswerable one before any LLM call. The margins are thin, so the answer model's
+  // "I couldn't find that" stays as a second gate.
+  RELEVANCE_FLOOR: Number(process.env.RASH_RELEVANCE_FLOOR) || 0.61,
   DOC_PREFIX: 'search_document: ', // nomic-embed-text task prefixes - it is trained to expect them
   QUERY_PREFIX: 'search_query: ',
   EMBED_BATCH: 16, // chunks per /api/embed call
