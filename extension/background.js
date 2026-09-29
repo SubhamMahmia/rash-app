@@ -172,6 +172,27 @@ function safeHttpUrl(value) {
   return /^https?:\/\//i.test(v) ? v : "";
 }
 
+// An answer's sources: what the chips need (number, title, site, time, link or file path). The
+// snippet is saved page text, so - like all page text - it is deliberately not kept.
+function cleanSources(list) {
+  return (Array.isArray(list) ? list : []).slice(0, 8).map((s) => {
+    if (!s || typeof s !== "object") return null;
+    const n = Number(s.n);
+    if (!Number.isInteger(n) || n < 1 || n > 50) return null;
+    const loc = clip(s.urlOrPath, 600);
+    const site = clip(s.site, 100);
+    return {
+      n: n,
+      id: Number.isInteger(Number(s.id)) ? Number(s.id) : 0,
+      title: clip(s.title, 200),
+      site: site,
+      category: clip(s.category, 60),
+      when: clip(s.when, 80),
+      urlOrPath: /^https?:\/\//i.test(loc) ? loc : (site === "Saved file" ? loc : ""),
+    };
+  }).filter(Boolean);
+}
+
 // Keep only known fields with size limits. Saved page text is never stored in the history.
 function cleanChatItem(m) {
   if (!m || typeof m !== "object") return null;
@@ -194,6 +215,7 @@ function cleanChatItem(m) {
       source_url: safeHttpUrl(m.source_url),
       last_updated: clip(m.last_updated, 40),
       source_label: clip(m.source_label, 200),
+      sources: cleanSources(m.sources),
       offer_memory: m.offer_memory === true,
       question: clip(m.question, 500)
     };

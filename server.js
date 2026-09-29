@@ -2067,15 +2067,27 @@ function instantAnswer(rawQuestion) {
   const fmt = (opts) => new Intl.DateTimeFormat('en-US', { timeZone: RASH_TIMEZONE, ...opts }).format(now);
 
   if (INSTANT_TIME_RE.test(q)) {
-    return instantResult(`It's ${fmt({ hour: 'numeric', minute: '2-digit', hour12: true })} (IST).`);
+    return instantResult(instantWording('time', fmt({ hour: 'numeric', minute: '2-digit', hour12: true })));
   }
   if (INSTANT_DAY_RE.test(q)) {
-    return instantResult(`Today is ${fmt({ weekday: 'long' })}.`);
+    return instantResult(instantWording('day', fmt({ weekday: 'long' })));
   }
   if (INSTANT_DATE_RE.test(q)) {
-    return instantResult(`Today is ${fmt({ weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}.`);
+    return instantResult(instantWording('date', fmt({ weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })));
   }
   return null;
+}
+
+// A few warm phrasings per instant answer, rotating; each states exactly the same time or date.
+const INSTANT_WORDINGS = {
+  time: [(v) => `It's ${v} (IST).`, (v) => `Right now it's ${v} (IST).`, (v) => `${v} (IST), on the dot-ish.`, (v) => `The clock says ${v} (IST).`],
+  day: [(v) => `Today is ${v}.`, (v) => `It's ${v} today.`, (v) => `${v}, all day today.`],
+  date: [(v) => `Today is ${v}.`, (v) => `It's ${v}.`, (v) => `Today's date: ${v}.`],
+};
+const instantTurn = { time: 0, day: 0, date: 0 };
+function instantWording(kind, value) {
+  const list = INSTANT_WORDINGS[kind];
+  return list[instantTurn[kind]++ % list.length](value);
 }
 
 // Where a saved file lives on disk: uploads keep their stamped name in rash-attachments/, inbox

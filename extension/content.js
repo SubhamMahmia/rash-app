@@ -68,7 +68,8 @@
     sheet: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16"/><path d="M4 15h16"/><path d="M10 4v16"/>',
     slides: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/>',
     image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/>',
-    archive: '<path d="M4 8h16v12H4z"/><path d="M3 4h18v4H3z"/><path d="M10 12h4"/>'
+    archive: '<path d="M4 8h16v12H4z"/><path d="M3 4h18v4H3z"/><path d="M10 12h4"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>'
   };
   function icon(name, size) {
     return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '" fill="none" stroke="currentColor" ' +
@@ -202,6 +203,35 @@
       }
       a.source:hover { background: rgba(255,255,255,0.06); color: #F2F2F4; }
       a.source svg { flex-shrink: 0; }
+
+      /* Sources under an answer, and the [n] badges in its text that point at them */
+      .cite {
+        all: unset; cursor: pointer; display: inline-block; min-width: 9px; padding: 0 4px; margin: 0 1px;
+        font-size: 10.5px; line-height: 15px; text-align: center; vertical-align: 1px;
+        border-radius: 5px; background: rgba(255,255,255,0.08); color: #C9C9D1;
+        transition: background 0.2s ease, color 0.2s ease;
+      }
+      .cite:hover, .cite:focus-visible { background: rgba(47,191,113,0.18); color: #F2F2F4; }
+      .srcs { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+      .src {
+        all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 9px; width: 100%;
+        padding: 6px 9px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.08); cursor: pointer;
+        font-family: inherit; transition: background 0.2s ease, border-color 0.2s ease;
+      }
+      .src:hover, .src:focus-visible { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.16); }
+      .src.static { cursor: default; }
+      .src.static:hover { background: transparent; border-color: rgba(255,255,255,0.08); }
+      .src.flash { border-color: rgba(47,191,113,0.55); background: rgba(47,191,113,0.07); }
+      .src .n { flex-shrink: 0; min-width: 10px; font-size: 10.5px; color: #8A8A94; text-align: right; }
+      .src .av {
+        flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; background: #1A1A1F; color: #C9C9D1;
+        display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600;
+      }
+      .src .txt { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+      .src .st { color: #E4E4E8; font-size: 12.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .src .sm { color: #9A9AA5; font-size: 11.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .card.calm { background: rgba(255,255,255,0.02); color: #C9C9D1; }
+      .tip { margin-top: 6px; font-size: 12px; color: #8A8A94; }
 
       .file {
         display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; margin-top: 8px;
@@ -822,6 +852,7 @@
     if (m.role === "user") return el("div", "me", m.text || "");
     if (m.role === "files") return fileCard(m.items || []);
     if (m.role === "answer") return answerCard(m);
+    if (m.role === "note" && m.text === NOT_FOUND_TEXT) return notFoundCard(m.text);
     return el("div", "card " + (m.kind === "error" ? "error" : "muted"), m.text || "");
   }
 
@@ -990,9 +1021,141 @@
     return card;
   }
 
+  // ---------- Sources under an answer ----------
+  // Everything here comes from saved web pages, so it is untrusted: built with createElement and
+  // textContent only, never innerHTML (the only innerHTML is our own fixed icon SVG).
+  const NOT_FOUND_TEXT = "I couldn't find that in your memory.";
+  const AI_DOWN_TEXT = "RaSh's AI engine isn't responding right now. Here are the closest matches.";
+  const snippetById = new Map(); // record id -> snippet, this tab only: saved page text never goes into history
+
+  // "today at 2:21 PM" -> "today 2:21 PM", "yesterday evening (6:40 PM)" -> "yesterday 6:40 PM",
+  // "Thursday 24 Sep at night (10:05 PM)" -> "Thu 24 Sep 10:05 PM"
+  function compactWhen(when) {
+    const w = String(when || "");
+    const clock = (w.match(/\d{1,2}:\d{2}\s?[AP]M/i) || [""])[0];
+    if (/^today/i.test(w)) return ("today " + clock).trim();
+    if (/^(yesterday|last night)/i.test(w)) return ("yesterday " + clock).trim();
+    const m = w.match(/^(?:on\s+)?([A-Z][a-z]{2})[a-z]*\s+(\d{1,2}\s+[A-Z][a-z]{2}(?:\s+\d{4})?)/);
+    if (m) return (m[1] + " " + m[2] + (clock ? " " + clock : "")).trim();
+    return w;
+  }
+
+  // "en.wikipedia.org" -> "wikipedia.org", "www.youtube.com" -> "youtube.com"
+  function shortSite(site) {
+    const s = String(site || "");
+    if (!/\./.test(s)) return s; // "Gmail", "Saved file"
+    const parts = s.replace(/^www\./i, "").split(".");
+    if (parts.length >= 3 && /^([a-z]{2}|m|mobile)$/i.test(parts[0])) parts.shift();
+    return parts.join(".");
+  }
+
+  function isWebUrl(u) {
+    if (!/^https?:\/\//i.test(String(u || ""))) return false;
+    try { const p = new URL(u); return p.protocol === "http:" || p.protocol === "https:"; } catch (e) { return false; }
+  }
+
+  function sourceAvatar(src) {
+    const av = el("span", "av");
+    if (src.site === "Saved file") av.innerHTML = icon("doc", 13); // fixed inline SVG
+    else if (src.site === "Gmail") av.innerHTML = icon("mail", 13); // fixed inline SVG
+    else av.textContent = (shortSite(src.site).replace(/[^a-z0-9]/gi, "").charAt(0) || "•").toUpperCase();
+    return av;
+  }
+
+  function openSourceFile(filePath, chip) {
+    chip.classList.add("flash");
+    safeSend({ type: "RASH_OPEN", path: filePath, reveal: false }, (res) => {
+      setTimeout(() => chip.classList.remove("flash"), 600);
+      if (!res || !res.ok) {
+        const msg = res && res.data && res.data.error ? res.data.error : "Could not open the file. Is the RaSh server running?";
+        addToHistory([{ role: "note", kind: "error", text: msg }]);
+      }
+    });
+  }
+
+  // One chip per source: web pages open in a new tab (http/https only), saved files through the
+  // usual open-file flow, anything else (an email) is shown but not clickable.
+  function sourceChip(src) {
+    let chip;
+    if (isWebUrl(src.urlOrPath)) {
+      chip = el("a", "src");
+      chip.href = src.urlOrPath;
+      chip.target = "_blank";
+      chip.rel = "noopener noreferrer";
+    } else if (src.site === "Saved file" && src.urlOrPath) {
+      chip = el("button", "src");
+      chip.type = "button";
+      chip.addEventListener("click", () => openSourceFile(src.urlOrPath, chip));
+    } else {
+      chip = el("div", "src static");
+    }
+    const meta = [shortSite(src.site), compactWhen(src.when)].filter(Boolean).join(" · ");
+    chip.appendChild(el("span", "n", String(src.n)));
+    chip.appendChild(sourceAvatar(src));
+    const txt = el("span", "txt");
+    txt.appendChild(el("span", "st", src.title || "Saved memory"));
+    if (meta) txt.appendChild(el("span", "sm", meta));
+    chip.appendChild(txt);
+    chip.title = snippetById.get(src.id) || [src.title, meta].filter(Boolean).join("\n");
+    return chip;
+  }
+
+  function sourcesBlock(sources) {
+    const block = el("div", "srcs");
+    const byN = new Map();
+    sources.forEach((src) => {
+      const chip = sourceChip(src);
+      byN.set(src.n, chip);
+      block.appendChild(chip);
+    });
+    return { block, byN };
+  }
+
+  // The answer text, with each [n] that matches a source turned into a small badge that points at
+  // its chip. Plain text nodes only.
+  function answerBody(text, byN) {
+    const body = el("div", "body");
+    const s = String(text || "");
+    const re = /\[(\d{1,2})\]/g;
+    let last = 0;
+    let m;
+    while ((m = re.exec(s))) {
+      const chip = byN && byN.get(Number(m[1]));
+      if (!chip) continue;
+      if (m.index > last) body.appendChild(document.createTextNode(s.slice(last, m.index)));
+      const badge = el("button", "cite", m[1]);
+      badge.type = "button";
+      badge.setAttribute("aria-label", "Source " + m[1]);
+      badge.addEventListener("click", () => {
+        chip.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        chip.classList.add("flash");
+        setTimeout(() => chip.classList.remove("flash"), 1200);
+      });
+      body.appendChild(badge);
+      last = m.index + m[0].length;
+    }
+    if (last < s.length) body.appendChild(document.createTextNode(s.slice(last)));
+    return body;
+  }
+
+  // Not found: calm, with a small tip. The sentence itself is exactly what the server sent.
+  function notFoundCard(text) {
+    const card = el("div", "card calm");
+    card.appendChild(el("div", "body", text));
+    card.appendChild(el("div", "tip", "Tip: RaSh only remembers pages saved while it's ON."));
+    return card;
+  }
+
   function answerCard(d) {
     const card = el("div", "card");
-    if (d.source_label) {
+    const sources = Array.isArray(d.sources) ? d.sources : [];
+    if (sources.length) {
+      // Smart Recall answer: the text with [n] badges, then its sources as chips
+      const { block, byN } = sourcesBlock(sources);
+      if (d.answer === AI_DOWN_TEXT) card.classList.add("calm");
+      card.appendChild(answerBody(d.answer, byN));
+      card.appendChild(block);
+    } else if (d.source_label) {
       // New style: one short answer, then a small line saying where it came from
       card.appendChild(el("div", "body", d.answer || "I could not find that."));
       const from = el("div", "fpath", d.source_label);
@@ -1005,7 +1168,7 @@
     }
 
     const meta = el("div", "meta");
-    if (d.source_url && /^https?:\/\//i.test(d.source_url)) {
+    if (!sources.length && d.source_url && /^https?:\/\//i.test(d.source_url)) { // chips already link it
       const a = el("a", "source");
       a.innerHTML = icon("external", 12); // fixed inline SVG
       a.appendChild(document.createTextNode(safeHost(d.source_url) || "Open page"));
@@ -1014,7 +1177,7 @@
       a.rel = "noopener noreferrer";
       meta.appendChild(a);
     }
-    const ago = d.source_label ? "" : timeAgo(d.last_updated); // the source line already names the saved date
+    const ago = d.source_label || sources.length ? "" : timeAgo(d.last_updated); // the source line/chips already name the saved date
     if (ago) meta.appendChild(el("span", "", "Saved " + ago));
     if (meta.childNodes.length) card.appendChild(meta);
 
@@ -1051,10 +1214,14 @@
     }
     const d = res.data || {};
     if (d.found) {
+      const sources = Array.isArray(d.sources) ? d.sources : [];
+      // Snippets are page text: kept in this tab for the hover only, never saved into the history.
+      sources.forEach((s) => { if (s && s.id && s.snippet) snippetById.set(s.id, String(s.snippet)); });
       return [{
         role: "answer", kind: d.kind === "recent" ? "recent" : "answer",
         title: d.title || "", answer: d.answer || "", source_url: d.source_url || "", last_updated: d.last_updated || "",
         source_label: d.source_label || "",
+        sources: sources.map((s) => ({ n: s.n, id: s.id, title: s.title, urlOrPath: s.urlOrPath, site: s.site, category: s.category, when: s.when })),
         offer_memory: !!(opts && opts.offer), question: opts && opts.offer ? opts.question : ""
       }];
     }
@@ -1132,12 +1299,22 @@
     return null;
   }
 
+  // A few warm phrasings, rotating; each states exactly the same time or date.
+  const INSTANT_WORDINGS = {
+    time: [(v) => "It's " + v + " (IST).", (v) => "Right now it's " + v + " (IST).", (v) => v + " (IST), on the dot-ish.", (v) => "The clock says " + v + " (IST)."],
+    day: [(v) => "Today is " + v + ".", (v) => "It's " + v + " today.", (v) => v + ", all day today."],
+    date: [(v) => "Today is " + v + ".", (v) => "It's " + v + ".", (v) => "Today's date: " + v + "."],
+  };
+  const instantTurn = { time: 0, day: 0, date: 0 };
+
   function instantClockAnswer(kind) {
     const now = new Date();
     const fmt = (opts) => new Intl.DateTimeFormat("en-US", { timeZone: RASH_TIMEZONE, ...opts }).format(now);
-    if (kind === "time") return "It's " + fmt({ hour: "numeric", minute: "2-digit", hour12: true }) + " (IST).";
-    if (kind === "day") return "Today is " + fmt({ weekday: "long" }) + ".";
-    return "Today is " + fmt({ weekday: "long", month: "long", day: "numeric", year: "numeric" }) + ".";
+    const value = kind === "time" ? fmt({ hour: "numeric", minute: "2-digit", hour12: true })
+      : kind === "day" ? fmt({ weekday: "long" })
+      : fmt({ weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    const list = INSTANT_WORDINGS[kind] || INSTANT_WORDINGS.date;
+    return list[instantTurn[kind in instantTurn ? kind : "date"]++ % list.length](value);
   }
 
   // ---------- Where should a question be answered from? ----------

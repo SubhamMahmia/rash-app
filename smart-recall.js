@@ -569,6 +569,155 @@ function latestEventAt(recordId, fallback) {
 }
 
 // ---------------------------------------------------------------------------
+// Warm wording for answers built straight from the data (no LLM, no added time). Each template has
+// a few phrasings that rotate; every phrasing states exactly the same facts, titles, times and [n]
+// citations - only the words around them change (scripts/eval-ask.js checks that). Casual records
+// (food, music, videos, sports, ...) may get a lightly playful phrasing; files, email, forms and
+// anything sensitive (health, money, personal) always get a crisp one. Titles stay in double quotes,
+// and in time-order answers the neighbour's title is always the LAST quote, because that is what
+// "and before that?" follows.
+// ---------------------------------------------------------------------------
+const CASUAL_CATEGORY = /(food|recipe|cook|music|song|singer|entertain|movie|film|video|comedy|comedian|sport|cricket|football|game|travel|celebrit|social|fun)/i;
+const SENSITIVE_CATEGORY = /(health|medical|doctor|finance|money|bank|bill|insurance|loan|tax|legal|personal|private|relationship|grief)/i;
+
+function tone(rec) {
+  const kind = recordKind(rec);
+  if (kind === 'file' || kind === 'email' || kind === 'form') return 'crisp';
+  const cat = String(rec.category || '');
+  if (SENSITIVE_CATEGORY.test(cat)) return 'crisp';
+  return kind === 'video' || CASUAL_CATEGORY.test(cat) ? 'playful' : 'crisp';
+}
+
+const PHRASES = {
+  before: {
+    crisp: [
+      (p) => `Right before "${p.a}", ${p.aw}, you were ${p.ing} "${p.n}" ${p.nt} [1].`,
+      (p) => `Just before "${p.a}" ${p.aw}, you were ${p.ing} "${p.n}" ${p.nt} [1].`,
+      (p) => `Just before you got to "${p.a}" ${p.aw}, you were ${p.ing} "${p.n}" ${p.nt} [1].`,
+    ],
+    playful: [
+      (p) => `Rewinding a little: just before "${p.a}" ${p.aw}, you were ${p.ing} "${p.n}" ${p.nt} [1].`,
+      (p) => `One step back from "${p.a}" ${p.aw}: you were ${p.ing} "${p.n}" ${p.nt} [1].`,
+      (p) => `Before "${p.a}" took over ${p.aw}, you were ${p.ing} "${p.n}" ${p.nt} [1].`,
+    ],
+  },
+  after: {
+    crisp: [
+      (p) => `Right after "${p.a}", ${p.aw}, you ${p.past} "${p.n}" ${p.nt} [1].`,
+      (p) => `Just after "${p.a}" ${p.aw}, you ${p.past} "${p.n}" ${p.nt} [1].`,
+      (p) => `Next after "${p.a}" ${p.aw}, you ${p.past} "${p.n}" ${p.nt} [1].`,
+    ],
+    playful: [
+      (p) => `Right after "${p.a}" ${p.aw}, you moved on and ${p.past} "${p.n}" ${p.nt} [1].`,
+      (p) => `Fast-forward from "${p.a}" ${p.aw}: next you ${p.past} "${p.n}" ${p.nt} [1].`,
+      (p) => `Straight after "${p.a}" ${p.aw}, you ${p.past} "${p.n}" ${p.nt} [1].`,
+    ],
+  },
+  nothingAround: {
+    crisp: [
+      (p) => `I don't have anything saved ${p.dir} "${p.a}", ${p.aw}.`,
+      (p) => `Nothing in your memory comes ${p.dir} "${p.a}", ${p.aw}.`,
+      (p) => `"${p.a}", ${p.aw}, is as far as your memory goes: nothing saved ${p.dir} it.`,
+    ],
+  },
+  latest: {
+    crisp: [
+      (p) => `The most recent ${p.sl}${p.noun} you ${p.verb} was "${p.t}", ${p.w} [1].`,
+      (p) => `Most recently, you ${p.verb} the ${p.sl}${p.noun} "${p.t}" ${p.wp} [1].`,
+      (p) => `Your latest ${p.sl}${p.noun}: "${p.t}", ${p.verb} ${p.wp} [1].`,
+    ],
+    playful: [
+      (p) => `Freshest in your memory: the ${p.sl}${p.noun} "${p.t}", which you ${p.verb} ${p.wp} [1].`,
+      (p) => `Most recently, you ${p.verb} the ${p.sl}${p.noun} "${p.t}" ${p.wp} [1].`,
+      (p) => `Top of the pile: the ${p.sl}${p.noun} "${p.t}", ${p.verb} ${p.wp} [1].`,
+    ],
+  },
+  onlyOne: {
+    crisp: [
+      (p) => `You have only one ${p.sl}${p.noun} saved: "${p.t}", ${p.w} [1].`,
+      (p) => `There's just one ${p.sl}${p.noun} in your memory so far: "${p.t}", ${p.w} [1].`,
+      (p) => `Only one ${p.sl}${p.noun} saved right now: "${p.t}", ${p.w} [1].`,
+    ],
+  },
+  lastN: {
+    crisp: [
+      (p) => `Your last ${p.count} ${p.sl}${p.nouns}:`,
+      (p) => `Here are your last ${p.count} ${p.sl}${p.nouns}, newest first:`,
+      (p) => `Your ${p.count} most recent ${p.sl}${p.nouns}:`,
+    ],
+  },
+  onlyN: {
+    crisp: [
+      (p) => `You have only ${p.count} ${p.sl}${p.nouns} saved:`,
+      (p) => `There are just ${p.count} ${p.sl}${p.nouns} in your memory so far:`,
+      (p) => `Only ${p.count} ${p.sl}${p.nouns} saved right now:`,
+    ],
+  },
+  recentList: {
+    crisp: [
+      (p) => `Your recent ${p.sl}${p.nouns}:`,
+      (p) => `Here are your recent ${p.sl}${p.nouns}, newest first:`,
+      (p) => `Your most recent ${p.sl}${p.nouns}:`,
+    ],
+  },
+  windowOne: {
+    crisp: [
+      (p) => `${p.label} you ${p.verb} "${p.t}" ${p.at} [1].`,
+      (p) => `${p.label}, you ${p.verb} "${p.t}" ${p.at} [1].`,
+      (p) => `You ${p.verb} "${p.t}" ${p.at}, ${p.labelLower} [1].`,
+    ],
+    playful: [
+      (p) => `Found it. ${p.label} you ${p.verb} "${p.t}" ${p.at} [1].`,
+      (p) => `Easy one: ${p.labelLower}, you ${p.verb} "${p.t}" ${p.at} [1].`,
+      (p) => `Got it. ${p.label}, you ${p.verb} "${p.t}" ${p.at} [1].`,
+    ],
+  },
+  windowList: {
+    crisp: [
+      (p) => `${p.label} you ${p.verb} ${p.count} ${p.nouns}:`,
+      (p) => `${p.label}, you ${p.verb} ${p.count} ${p.nouns}:`,
+      (p) => `${p.count} ${p.nouns} ${p.verb} ${p.labelLower}:`,
+    ],
+    playful: [
+      (p) => `Here's the rundown. ${p.label} you ${p.verb} ${p.count} ${p.nouns}:`,
+      (p) => `${p.label}, you ${p.verb} ${p.count} ${p.nouns}:`,
+      (p) => `Quick recap: ${p.labelLower}, you ${p.verb} ${p.count} ${p.nouns}:`,
+    ],
+  },
+  file: {
+    crisp: [
+      (p) => `I found "${p.t}" in your saved files, saved ${p.wp} [1].`,
+      (p) => `"${p.t}" is in your saved files, saved ${p.wp} [1].`,
+      (p) => `Here it is: "${p.t}", saved ${p.wp} [1].`,
+    ],
+  },
+  fileOthers: {
+    crisp: [
+      (p) => ` Other matches: ${p.list}.`,
+      (p) => ` Also close: ${p.list}.`,
+      (p) => ` You might also mean ${p.list}.`,
+    ],
+  },
+  provenance: {
+    crisp: [
+      (p) => `You saw this ${p.where} ${p.wp} [${p.n}].`,
+      (p) => `That's from ${p.from}, ${p.wp} [${p.n}].`,
+      (p) => `You came across this ${p.where} ${p.wp} [${p.n}].`,
+      (p) => `Source: ${p.from}, ${p.wp} [${p.n}].`,
+    ],
+  },
+};
+
+const rotation = new Map();
+function say(key, toneName, params) {
+  const set = PHRASES[key][toneName] || PHRASES[key].crisp;
+  const slot = key + ':' + (PHRASES[key][toneName] ? toneName : 'crisp');
+  const i = rotation.get(slot) || 0;
+  rotation.set(slot, i + 1);
+  return set[i % set.length](params);
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 function verbs(kind) {
@@ -617,15 +766,15 @@ async function timeOrderRoute(p, ctx) {
   const anchorSource = makeSource(2, anchor, anchorAt, undefined, now);
   if (!neighbour) {
     return {
-      ...notFound('time-order', `I don't have anything saved ${t.dir} "${anchorTitle}", ${whenPhrase(when(anchorAt, now))}.`),
+      ...notFound('time-order', say('nothingAround', 'crisp', { dir: t.dir, a: anchorTitle, aw: whenPhrase(when(anchorAt, now)) })),
       sources: [{ ...anchorSource, n: 1 }],
     };
   }
   const v = verbs(recordKind(neighbour.rec));
   const nTime = daysBetween(neighbour.at, anchorAt) === 0 ? 'at ' + clock(neighbour.at) : whenPhrase(when(neighbour.at, now));
-  const answer = before
-    ? `Right before "${anchorTitle}", ${whenPhrase(when(anchorAt, now))}, you were ${v.ing} "${displayTitle(neighbour.rec)}" ${nTime} [1].`
-    : `Right after "${anchorTitle}", ${whenPhrase(when(anchorAt, now))}, you ${v.past} "${displayTitle(neighbour.rec)}" ${nTime} [1].`;
+  const answer = say(before ? 'before' : 'after', tone(neighbour.rec), {
+    a: anchorTitle, aw: whenPhrase(when(anchorAt, now)), n: displayTitle(neighbour.rec), nt: nTime, ing: v.ing, past: v.past,
+  });
   return found({
     route: 'time-order',
     kind: 'sequence',
@@ -698,7 +847,8 @@ async function listRoute(p, ctx) {
     let answer;
     if (shown.length === 1 && want === 1) {
       const x = shown[0];
-      answer = `The most recent ${siteLabel}${noun} you ${verb} was "${displayTitle(x.rec)}", ${when(x.at, now)} [1].`;
+      const w1 = when(x.at, now);
+      answer = say('latest', tone(x.rec), { sl: siteLabel, noun, verb, t: displayTitle(x.rec), w: w1, wp: whenPhrase(w1) });
       if (p.summarize) {
         const summary = await h.summarizeRecord(x.rec);
         if (summary) answer += '\n\n' + summary;
@@ -706,11 +856,12 @@ async function listRoute(p, ctx) {
     } else if (shown.length === 1) {
       // Asked for several, but there is only one: say so rather than "Your last 1 file".
       const x = shown[0];
-      answer = `You have only one ${siteLabel}${noun} saved: "${displayTitle(x.rec)}", ${when(x.at, now)} [1].`;
+      answer = say('onlyOne', 'crisp', { sl: siteLabel, noun, t: displayTitle(x.rec), w: when(x.at, now) });
     } else {
+      const counts = { count: shown.length, sl: siteLabel, nouns };
       const header = want > 1
-        ? (shown.length < want ? `You have only ${shown.length} ${siteLabel}${nouns} saved:` : `Your last ${shown.length} ${siteLabel}${nouns}:`)
-        : `Your recent ${siteLabel}${nouns}:`;
+        ? say(shown.length < want ? 'onlyN' : 'lastN', 'crisp', counts)
+        : say('recentList', 'crisp', counts);
       answer = header + '\n' + shown.map((x, i) => `${i + 1}. "${displayTitle(x.rec)}" – ${when(x.at, now)} [${i + 1}]`).join('\n');
     }
     return found({
@@ -731,11 +882,15 @@ async function listRoute(p, ctx) {
   const stamp = (d) => (w.singleDay ? clock(d) : `${WEEKDAYS[d.getDay()].slice(0, 3)} ${d.getDate()} ${MONTHS[d.getMonth()]}, ${clock(d)}`);
   const sources = shown.map((x, i) => makeSource(i + 1, x.rec, x.at, undefined, now));
   let answer;
+  const labelLower = w.label.charAt(0).toLowerCase() + w.label.slice(1);
+  const allCasual = shown.every((x) => tone(x.rec) === 'playful');
   if (shown.length === 1) {
     const x = shown[0];
-    answer = `${w.label} you ${verb} "${displayTitle(x.rec)}" ${w.singleDay ? 'at ' + clock(x.at) : whenPhrase(when(x.at, now))} [1].`;
+    answer = say('windowOne', tone(x.rec), {
+      label: w.label, labelLower, verb, t: displayTitle(x.rec), at: w.singleDay ? 'at ' + clock(x.at) : whenPhrase(when(x.at, now)),
+    });
   } else {
-    answer = `${w.label} you ${verb} ${inOrder.length} ${nouns}:\n` +
+    answer = say('windowList', allCasual ? 'playful' : 'crisp', { label: w.label, labelLower, verb, count: inOrder.length, nouns }) + '\n' +
       shown.map((x, i) => `• ${stamp(x.at)} – "${displayTitle(x.rec)}" [${i + 1}]`).join('\n') +
       (inOrder.length > shown.length ? `\n…and ${inOrder.length - shown.length} more.` : '');
   }
@@ -762,8 +917,8 @@ async function fileRoute(p, ctx) {
   const now = ctx.now;
   const recs = search.results.map((r) => ({ rec: getRecord(r.recordId), text: r.text })).filter((x) => x.rec);
   const sources = recs.map((x, i) => makeSource(i + 1, x.rec, latestEventAt(x.rec.id, x.rec.last_updated), stripHeader(x.text), now));
-  let answer = `I found "${sources[0].title}" in your saved files, saved ${whenPhrase(sources[0].when)} [1].`;
-  if (sources.length > 1) answer += ' Other matches: ' + sources.slice(1).map((s) => `"${s.title}" [${s.n}]`).join(', ') + '.';
+  let answer = say('file', 'crisp', { t: sources[0].title, wp: whenPhrase(sources[0].when) });
+  if (sources.length > 1) answer += say('fileOthers', 'crisp', { list: sources.slice(1).map((s) => `"${s.title}" [${s.n}]`).join(', ') });
   return found({
     route: 'file',
     kind: 'answer',
@@ -833,16 +988,20 @@ async function hybridRoute(p, ctx, route, filter) {
 // caller can still show the sources. With onToken (the streaming route), tokens are passed on as
 // they arrive - except a leading "NOT_FOUND", which is held back so it never flashes on screen.
 // ---------------------------------------------------------------------------
-// The example is deliberately about something that isn't in any test fixture.
+// Static, and sent first in every request, so Ollama can reuse its cached prefix. The examples are
+// deliberately about things that aren't in any test fixture.
 const SYSTEM_PROMPT = [
-  "You are RaSh, the user's private memory assistant. Below the question are numbered memories from pages, files and emails the user saved, each with where and when the user saw it.",
+  "You are RaSh, the user's private memory assistant: a sharp, warm friend who remembers what they saved. Below the question are numbered memories, each with where and when the user saw it.",
   'Rules:',
-  `- Answer ONLY from those memories. If they do not contain the answer, reply exactly: ${NOT_FOUND}`,
-  '- Say when and where the user saw it. Copy the time exactly as it is written with the memory (for example "yesterday evening (6:40 PM)"); never reword or work out a time yourself.',
-  '- Put the memory number in square brackets right after the fact it supports, like [1].',
-  '- "You" is only the user, the reader. People and things in the memories are "he", "she", "it" or their name - never "you".',
-  '- Write 1-3 calm, natural sentences in plain text. No opinions, guesses, greetings or anything the memories do not say. Never mention "memories", these rules, or how you answered.',
-  'Example: You read about Marie Curie on britannica.com yesterday evening (7:10 PM) [1]. She won two Nobel Prizes, one in physics and one in chemistry [1].',
+  `- Use ONLY facts from the memories; never add facts, names or numbers from your own knowledge. If they don't answer the question, reply exactly: ${NOT_FOUND}`,
+  '- Say when and where the user saw it, copying the time exactly as written; never work out a time yourself.',
+  '- Put the memory number right after each fact it supports, like [1].',
+  '- "You" means only the user, and you only know they saw, read, watched or saved something; people and things in the memories are "he", "she", "it" or their name.',
+  '- 1-3 short, warm sentences. Plain text, no lists, no emojis; never mention "memories" or these rules.',
+  '- Casual topics (food, music, videos, sports) may get one light, playful phrase that adds no facts. Study, work, files, email, health, money or anything personal: crisp, no jokes. You may acknowledge a feeling the user states, but never guess their mood or claim feelings of your own.',
+  'Examples:',
+  'You read about Marie Curie on britannica.com yesterday evening (7:10 PM) [1]. She won two Nobel Prizes, in physics and chemistry [1].',
+  'You saw a paneer tikka recipe on hebbarskitchen.com on Sunday 27 Sep in the evening (7:30 PM) [1]. The paneer marinates for two hours [1], so good things take time.',
 ].join('\n');
 
 function memoryHeader(source) {
@@ -889,6 +1048,7 @@ function cleanAnswer(raw) {
     .replace(/__([^_\n]+)__/g, '$1')
     .replace(/`/g, '')
     .replace(/^#+\s*/gm, '')
+    .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, '') // no emojis in answers, enforced here too
     .replace(/\s+/g, ' ')
     .trim();
   t = h.trimAnswer(t);
@@ -914,7 +1074,9 @@ function withProvenance(text, sources) {
   if (sources.some((s) => s.when && t.includes(s.when))) return t;
   const s = sources[0];
   const where = s.site === 'Gmail' ? 'in Gmail' : s.site === 'Saved file' ? 'in your saved files' : s.site ? 'on ' + s.site : '';
-  return `${t} You saw this ${where ? where + ' ' : ''}${whenPhrase(s.when)} [${s.n}].`.replace(/\s+/g, ' ').trim();
+  const from = s.site === 'Gmail' ? 'your Gmail' : s.site === 'Saved file' ? 'your saved files' : s.site || 'your memory';
+  const line = say('provenance', 'crisp', { where, from, wp: whenPhrase(s.when), n: s.n });
+  return `${t} ${line}`.replace(/\s+/g, ' ').trim();
 }
 
 function saysNotFound(text, raw) {
@@ -1042,4 +1204,4 @@ function fmt(n) {
   return n === null || n === undefined || n < 0 ? 'n/a' : n.toFixed(3);
 }
 
-module.exports = { init, answer, when, parseQuestion, NOT_FOUND };
+module.exports = { init, answer, when, parseQuestion, NOT_FOUND, PHRASES }; // PHRASES: read by scripts/eval-ask.js

@@ -242,6 +242,68 @@ const FIXTURES = [
   },
 ];
 
+// Every rotating phrasing of a no-LLM answer (smart-recall.js PHRASES) must state exactly the same
+// facts: each fact value below must appear verbatim in every variant. Time-order answers must also
+// end their quotes on the neighbour's title, which is what "and before that?" follows.
+function checkPhrasing() {
+  const { PHRASES } = require(path.join(ROOT, 'smart-recall.js'));
+  const time = { a: 'Anchor Title A', aw: 'today at 1:11 PM', n: 'Neighbour Title N', nt: 'at 1:01 PM', ing: 'reading', past: 'read' };
+  const one = { sl: 'Wikipedia ', noun: 'article', verb: 'read', t: 'Record Title T', w: 'Thursday 24 Sep at night (10:05 PM)', wp: 'on Thursday 24 Sep at night (10:05 PM)' };
+  const many = { count: 3, sl: 'Wikipedia ', nouns: 'articles' };
+  const win = { label: 'Yesterday', labelLower: 'yesterday', verb: 'read', t: 'Record Title T', at: 'at 9:15 AM', count: 2, nouns: 'pages' };
+  const samples = {
+    before: [time, ['Anchor Title A', 'today at 1:11 PM', 'Neighbour Title N', 'at 1:01 PM', 'reading', '[1]']],
+    after: [time, ['Anchor Title A', 'today at 1:11 PM', 'Neighbour Title N', 'at 1:01 PM', 'read', '[1]']],
+    nothingAround: [{ dir: 'before', a: 'Anchor Title A', aw: 'today at 1:11 PM' }, ['before', 'Anchor Title A', 'today at 1:11 PM']],
+    latest: [one, ['Wikipedia article', 'read', 'Record Title T', 'Thursday 24 Sep at night (10:05 PM)', '[1]']],
+    onlyOne: [one, ['Wikipedia article', 'Record Title T', 'Thursday 24 Sep at night (10:05 PM)', '[1]']],
+    lastN: [many, ['3', 'Wikipedia articles']],
+    onlyN: [many, ['3', 'Wikipedia articles']],
+    recentList: [many, ['Wikipedia articles']],
+    windowOne: [win, ['read', 'Record Title T', 'at 9:15 AM', '[1]', /yesterday/i]],
+    windowList: [win, ['read', '2 pages', /yesterday/i]],
+    file: [{ t: 'Record Title T', wp: 'on Thursday 24 Sep in the morning (11:00 AM)' }, ['Record Title T', 'Thursday 24 Sep in the morning (11:00 AM)', '[1]']],
+    fileOthers: [{ list: '"Other One" [2], "Other Two" [3]' }, ['"Other One" [2], "Other Two" [3]']],
+    provenance: [{ where: 'on en.wikipedia.org', from: 'en.wikipedia.org', wp: 'today at 2:21 PM', n: 2 }, ['en.wikipedia.org', 'today at 2:21 PM', '[2]']],
+  };
+  const problems = [];
+  let count = 0;
+  for (const [key, tones] of Object.entries(PHRASES)) {
+    if (!samples[key]) { problems.push(`no fact check for phrasing "${key}"`); continue; }
+    const [params, facts] = samples[key];
+    for (const [toneName, variants] of Object.entries(tones)) {
+      variants.forEach((fn, i) => {
+        count++;
+        const text = fn(params);
+        const missing = facts.filter((f) => (f instanceof RegExp ? !f.test(text) : !text.includes(String(f))));
+        if (missing.length) problems.push(`${key}/${toneName}#${i + 1} is missing ${missing.join(', ')}: "${text}"`);
+        if ((key === 'before' || key === 'after')) {
+          const quotes = [...text.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+          if (quotes[quotes.length - 1] !== params.n) problems.push(`${key}/${toneName}#${i + 1} doesn't end on the neighbour's title`);
+        }
+        if (/\p{Extended_Pictographic}/u.test(text)) problems.push(`${key}/${toneName}#${i + 1} has an emoji`);
+      });
+    }
+  }
+  if (problems.length) throw new Error('Phrasing check failed:\n  ' + problems.join('\n  '));
+  return count;
+}
+
+// Checks every answer must pass, whatever the question.
+const BANNED_LINES = /\bI (?:really )?miss(?:ed)? you\b|\bonly I (?:really )?understand\b|\bI(?:'m| am) (?:so )?(?:happy|sad|lonely)\b/i;
+function answerProblems(body) {
+  const text = String(body.answer || body.message || '');
+  if (/\p{Extended_Pictographic}/u.test(text)) return 'answer contains an emoji';
+  if (BANNED_LINES.test(text)) return 'answer contains a banned line';
+  if (body.found && Array.isArray(body.sources)) {
+    const have = new Set(body.sources.map((s) => Number(s.n)));
+    const cited = [...text.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]));
+    const orphan = cited.filter((n) => !have.has(n));
+    if (orphan.length) return `answer cites [${orphan.join('], [')}] with no matching source`;
+  }
+  return '';
+}
+
 // Guards so a future fixture edit can't quietly make a question easier than intended.
 function checkFixtures() {
   const problems = [];
@@ -562,6 +624,7 @@ async function removeDir(dir) {
 
 async function main() {
   checkFixtures();
+  console.log(`Phrasing: ${checkPhrasing()} no-LLM answer variants checked, all state the same facts.`);
   if (minutesSinceMidnight < 180) {
     console.log('  ! Running within 3 hours after midnight: "today" fixtures are squeezed together, so time questions are less reliable.');
   }
@@ -631,9 +694,10 @@ async function main() {
         }, QUESTION_TIMEOUT_MS);
         body = r.body || {};
         const text = visibleText(body);
+        const general = answerProblems(body);
         verdict = JSON.stringify(body).includes(VAULT_SECRET)
           ? fail('VAULT LEAK: the response contains the vault OTP')
-          : check(body, text);
+          : general ? fail(general) : check(body, text);
       } catch (err) {
         body = {};
         verdict = fail(err.name === 'AbortError' ? `no answer within ${QUESTION_TIMEOUT_MS / 1000}s` : `request failed: ${err.message}`);
