@@ -1511,6 +1511,8 @@ const candidateRoots = [
   path.join(homeDir, 'Pictures'),
   oneDriveDir ? path.join(oneDriveDir, 'Documents') : '',
   oneDriveDir ? path.join(oneDriveDir, 'Desktop') : '',
+  // iCloud Drive lives inside ~/Library, which the scan below skips on macOS, so it is listed on its own
+  process.platform === 'darwin' ? path.join(homeDir, 'Library', 'Mobile Documents', 'com~apple~CloudDocs') : '',
   inboxDir,
   attachmentsDir
 ].filter(Boolean);
@@ -1526,6 +1528,10 @@ const SKIP_DIRS = new Set([
   'system32', 'winsxs', 'application data', 'local settings', 'cookies', 'nethood', 'printhood',
   'recent', 'sendto', 'start menu', 'site-packages',
 ]);
+// macOS keeps app data in ~/Library (Containers, Mail, Messages, caches...). Walking it makes macOS ask
+// whether Terminal may "access data from other apps" and fills the index with app internals, so the scan
+// skips that one folder. A folder named Library anywhere else is still searched.
+const SKIP_PATHS = new Set(process.platform === 'darwin' ? [path.join(path.resolve(homeDir), 'Library')] : []);
 
 let fileIndex = [];
 // The home folder is scanned too, but only the main folders above count as "watched" for open-file
@@ -1558,7 +1564,7 @@ async function scanFiles() {
         const full = path.join(dir, entry.name);
 
         if (entry.isDirectory()) {
-          if (depth < max && !SKIP_DIRS.has(entry.name.toLowerCase())) {
+          if (depth < max && !SKIP_DIRS.has(entry.name.toLowerCase()) && !SKIP_PATHS.has(full)) {
             stack.push({ dir: full, depth: depth + 1, max });
           }
         } else if (entry.isFile()) {
