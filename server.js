@@ -393,17 +393,85 @@ try {
   db.exec("ALTER TABLE records ADD COLUMN tags TEXT DEFAULT ''");
 } catch (_) {}
 
-// Middleware
-app.use(express.json({ limit: '10mb' }));
+// ---------------------------------------------------------------------------
+// WHO MAY TALK TO THIS SERVER (runs first, before the body is even parsed)
+// Websites the user visits must never read or write memories here. Browsers add headers a web page
+// cannot fake: Origin on cross-origin requests and on POSTs, and Sec-Fetch-Site on every request. So:
+//   - Origin present: only RaSh's own extensions (their exact IDs) and RaSh's own dashboard page.
+//   - No Origin: refused when the browser marks it as coming from another site (an <img>, <script> or
+//     form a web page set up), except a plain GET page navigation (a link, or Google's OAuth redirect).
+//     The RaSh extension's own GETs carry no Origin but are marked Sec-Fetch-Site: none, so they pass.
+//   - Neither header: a program on this computer (the eval, curl, scripts). It could read rash.db
+//     directly anyway, so it is allowed.
+// Every request must also come from this computer and name localhost as its Host (stops DNS rebinding).
+// Anything refused gets 403 with a JSON reason, and the server log says why.
+// ---------------------------------------------------------------------------
 
-// CORS for browser extension
+// Chrome's ID for an unpacked extension is a hash of its folder path, so the server works out the IDs of
+// RaSh's two extension folders itself (no settings, no change to the extensions). For a copy loaded from
+// another folder, add its ID to RASH_EXTENSION_IDS (comma-separated).
+function unpackedExtensionId(dir) {
+  let p = fs.realpathSync.native(dir);
+  if (process.platform === 'win32' && /^[a-z]:/.test(p)) p = p[0].toUpperCase() + p.slice(1);
+  const hex = crypto.createHash('sha256').update(Buffer.from(p, process.platform === 'win32' ? 'utf16le' : 'utf8')).digest('hex').slice(0, 32);
+  return [...hex].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
+}
+const RASH_EXTENSIONS = new Map(); // extension ID -> name
+for (const [dir, name] of [[path.join(__dirname, 'extension'), 'RaSh Ambient Capture'], [__dirname, 'RaSh Web Capture']]) {
+  try { if (fs.existsSync(path.join(dir, 'manifest.json'))) RASH_EXTENSIONS.set(unpackedExtensionId(dir), name); } catch (_) {}
+}
+for (const raw of String(process.env.RASH_EXTENSION_IDS || '').split(',')) {
+  const id = raw.trim().toLowerCase();
+  if (/^[a-p]{32}$/.test(id)) RASH_EXTENSIONS.set(id, 'from RASH_EXTENSION_IDS');
+}
+const RASH_PAGE_ORIGINS = new Set([`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`]);
+const LOCAL_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`]);
+
+function isRaShOrigin(origin) {
+  if (RASH_PAGE_ORIGINS.has(origin)) return true;
+  const m = /^chrome-extension:\/\/([a-p]{32})$/.exec(origin || '');
+  return !!m && RASH_EXTENSIONS.has(m[1]);
+}
+function isLoopbackAddress(a) {
+  return a === '::1' || /^(::ffff:)?127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(a || '');
+}
+// Why a request is refused, or '' if it may go on
+function blockReason(req) {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return 'it did not come from this computer';
+  if (!LOCAL_HOSTS.has(String(req.headers.host || '').toLowerCase())) return `unexpected Host "${req.headers.host || ''}"`;
+  const origin = req.headers.origin;
+  if (origin) return isRaShOrigin(origin) ? '' : `origin ${origin} is not the RaSh extension or dashboard`;
+  const site = req.headers['sec-fetch-site'];
+  const pageNavigation = req.method === 'GET' && req.headers['sec-fetch-mode'] === 'navigate';
+  if ((site === 'cross-site' || site === 'same-site') && !pageNavigation) return 'a web page on another site sent it';
+  return '';
+}
+const blockLoggedAt = new Map(); // one log line per reason per minute, so a noisy page can't flood the log
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-vault-unlocked, x-vault-token, x-file-name, x-is-sensitive');
+  const why = blockReason(req);
+  if (why) {
+    if (Date.now() - (blockLoggedAt.get(why) || 0) > 60000) {
+      blockLoggedAt.set(why, Date.now());
+      console.warn(`[Security] Blocked ${req.method} ${req.path}: ${why}.` +
+        (/chrome-extension:/.test(why) ? ' If this is your RaSh extension loaded from another folder, add its ID to RASH_EXTENSION_IDS.' : ''));
+    }
+    return res.status(403).json({ error: `Blocked: RaSh's server only answers the RaSh extension and its own dashboard (${why}).` });
+  }
+  const origin = req.headers.origin;
+  if (origin) { // CORS for exactly that origin, never "*"
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-vault-unlocked, x-vault-token, x-file-name, x-is-sensitive');
+  }
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
+console.log('[Security] Browser requests accepted only from: ' +
+  [...RASH_EXTENSIONS].map(([id, name]) => `chrome-extension://${id} (${name})`).concat([...RASH_PAGE_ORIGINS]).join(', '));
+
+// Middleware
+app.use(express.json({ limit: '10mb' }));
 
 // The dashboard: index.html at the project root, plus its own app.js and style.css. Served
 // explicitly, one route per file, so nothing else in the project root is exposed by name.
