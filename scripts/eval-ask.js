@@ -100,6 +100,7 @@ const T = {
   sensex: localAt(8, 11, 30),
   taxReceipt: localAt(12, 10, 0),
   youtube: localAt(thursdaysBack, 22, 5),
+  github: localAt(9, 17, 35), // always before "this week" (a week is at most 7 days)
 };
 
 function page(url, body) {
@@ -239,6 +240,14 @@ const FIXTURES = [
     content: page('https://www.youtube.com/watch?v=Gt8xR2kQ1pA',
       'Day one of the 30 day beginner course. We tune the guitar, learn how to hold a pick, and play the E minor, G and D chords ' +
       'with a simple strumming pattern.'),
+  },
+  {
+    // A site page older than any "this week": "What did I read on GitHub this week?" must not answer with it.
+    ref: 'github', kind: 'page', key: 'GitHub Actions', category: 'Tech',
+    form_name: 'Features - GitHub Actions (github.com)',
+    content: page('https://github.com/features/actions',
+      'GitHub Actions automates software workflows: build, test and deploy code right from a repository, with hosted runners ' +
+      'for Linux, macOS and Windows and a marketplace of ready-made actions for common tasks.'),
   },
 ];
 
@@ -435,6 +444,39 @@ const QUESTIONS = [
   {
     q: 'When is my dentist appointment?',
     check: (res, text) => (String(text).trim() === NOT_FOUND ? ok() : fail(`expected exactly "${NOT_FOUND}"`)),
+  },
+  // Filters a question names must hold (added with the fixes for pages being called videos, and for
+  // site questions answered from outside their time window).
+  {
+    q: 'What did I watch today?', // today has pages and an email, but no video
+    check: (res, text) => {
+      if (/\bvideos?\b/i.test(String(text))) return fail('called non-videos "videos"');
+      return !res.found && String(text).trim() === NOT_FOUND ? ok() : fail(`expected exactly "${NOT_FOUND}" (no videos today)`);
+    },
+  },
+  {
+    q: 'What did I read on GitHub this week?', // the only GitHub page is 9 days old
+    check: (res, text) => {
+      if (mentions(text, 'github')) return fail('answered with the GitHub page from before this week');
+      return !res.found && String(text).trim() === NOT_FOUND ? ok() : fail(`expected exactly "${NOT_FOUND}"`);
+    },
+  },
+  {
+    q: 'What did I read on Wikipedia today?', // both filters match: today's two Wikipedia pages, nothing else
+    check: (res, text) => {
+      const want = ['photosynthesis', 'bezos'];
+      const src = sourceIds(res);
+      if (src) {
+        const wantIds = want.map((r) => ids[r]);
+        const extra = src.filter((id) => !wantIds.includes(id));
+        const missing = wantIds.filter((id) => !src.includes(id));
+        if (extra.length || missing.length) return fail(`sources off (extra ${extra.join(',') || '-'}, missing ${missing.join(',') || '-'})`);
+      }
+      const absent = want.filter((r) => !mentions(text, r));
+      if (absent.length) return fail(`doesn't mention ${absent.join(', ')}`);
+      if (mentions(text, 'hardik') || mentions(text, 'bescom')) return fail('includes a non-Wikipedia record from today');
+      return ok();
+    },
   },
 ];
 

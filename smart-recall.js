@@ -820,11 +820,12 @@ async function listRoute(p, ctx) {
     excludeSearch: readingQuestion,
   });
 
-  // "what was I watching": prefer videos when there are any.
-  if (activityWatch) {
-    const videos = items.filter((x) => recordKind(x.rec) === 'video');
-    if (videos.length) items = videos;
-  }
+  // "what was I watching": videos only. A page is never listed as a video, so with no videos this finds
+  // nothing and says so, instead of "you watched 21 videos" over a list of ordinary pages.
+  if (activityWatch) items = items.filter((x) => recordKind(x.rec) === 'video');
+  // Nothing matches every filter the question names (a kind, or a site, within its time window):
+  // the normal not-found, never records from other days or of another kind.
+  if (!items.length && mustMatch(p)) return notFound('list' + (w ? ':time-window' : ':recency') + routeSuffix(p) + ' (nothing matches)');
 
   // "the latest article about X": only records that are actually about X.
   if (p.topicWords.length) {
@@ -902,6 +903,15 @@ async function listRoute(p, ctx) {
     primary: shown[shown.length - 1].rec,
     label: `From your memory: ${inOrder.length} ${inOrder.length === 1 ? noun : nouns}, ${w.label.toLowerCase()}`,
   });
+}
+
+// Filters a question names that must hold, with no falling back to records outside them:
+// - "watch" questions are about videos only (a page is never called a video);
+// - a time window together with a site ("on GitHub this week") or a kind ("files", "PDFs", "emails",
+//   "videos" yesterday) is answered only from records that match both.
+function mustMatch(p) {
+  const kind = p.kinds.has('video') || p.kinds.has('file') || p.kinds.has('email') || p.pdfOnly;
+  return p.kinds.has('video') || (!!p.window && (kind || p.sites.length > 0));
 }
 
 function routeSuffix(p) {
@@ -1172,12 +1182,19 @@ async function answer({ question, cleanQuestion, unlocked, onToken }) {
       tried.push('file');
       result = await fileRoute(p, ctx);
     }
+    const strict = mustMatch(p);
+    const filtered = () => {
+      const filter = recordFilter({ kinds: new Set([...p.kinds].filter((k) => k !== 'video')), pdfOnly: p.pdfOnly, sites: p.sites, videoOnly: p.kinds.has('video') && p.kinds.size === 1 });
+      return p.window ? withWindow(filter, p.window) : filter;
+    };
     if (!result && !p.timeOrder && p.topicWords.length && (p.window || p.sites.length || p.kinds.size) && !tried.length) {
       tried.push('filtered');
-      const filter = recordFilter({ kinds: new Set([...p.kinds].filter((k) => k !== 'video')), pdfOnly: p.pdfOnly, sites: p.sites, videoOnly: p.kinds.has('video') && p.kinds.size === 1 });
-      const windowed = p.window ? withWindow(filter, p.window) : filter;
-      const r = await hybridRoute(p, ctx, 'hybrid' + (p.window ? '+time-window' : '') + routeSuffix(p), windowed);
-      if (r.found) result = r;
+      const r = await hybridRoute(p, ctx, 'hybrid' + (p.window ? '+time-window' : '') + routeSuffix(p), filtered());
+      if (r.found || strict) result = r; // filters the question names must hold: no unfiltered fallback
+    }
+    if (!result && !p.timeOrder && strict) {
+      // The list matched the filters but not the topic: search only records that match every filter.
+      result = await hybridRoute(p, ctx, `hybrid+filters (fallback from ${tried.join(', ') || 'none'})`, filtered());
     }
     if (!result) result = await hybridRoute(p, ctx, tried.length ? `hybrid (fallback from ${tried.join(', ')})` : 'hybrid');
   } catch (err) {

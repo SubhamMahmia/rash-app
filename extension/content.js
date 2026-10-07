@@ -69,12 +69,88 @@
     slides: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/>',
     image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/>',
     archive: '<path d="M4 8h16v12H4z"/><path d="M3 4h18v4H3z"/><path d="M10 12h4"/>',
-    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>'
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+    play: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/>',
+    calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M8 3v4"/><path d="M16 3v4"/>',
+    arrow: '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>'
   };
   function icon(name, size) {
     return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '" fill="none" stroke="currentColor" ' +
       'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON_PATHS[name] || "") + '</svg>';
   }
+
+  // ---------- RaSh's mark: one small geometric glyph (a node in a hexagon), the same at every size ----------
+  // Header, side tab, chat avatar, searching row and the empty chat all use it. The state is still a class on the
+  // wrapper; it only changes how the mark is lit: a slow pulse while searching, a steady glow while listening or
+  // answering, one brief brighter flash on a found answer or a saved page, dim and still when nothing was found,
+  // the AI engine or server is down, or RaSh is OFF. No face, no expressions.
+  const MARK_SVG = '<svg class="mk" viewBox="0 0 32 32" aria-hidden="true" focusable="false">' +
+    '<circle class="mk-halo" cx="16" cy="16" r="15"/>' +
+    '<path d="M16 4.5L25.96 10.25V21.75L16 27.5L6.04 21.75V10.25Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/>' +
+    '<path d="M16 16V9.5M16 16L21.63 19.25M16 16L10.37 19.25" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>' +
+    '<circle class="mk-core" cx="16" cy="16" r="3.2" fill="currentColor"/>' +
+    "</svg>";
+
+  const MASCOT_LABELS = {
+    idle: "RaSh", greet: "RaSh", hello: "RaSh", smile: "RaSh", listening: "RaSh, listening",
+    thinking: "RaSh, searching", talking: "RaSh, answering", happy: "RaSh, found an answer",
+    notfound: "RaSh, nothing found", offline: "RaSh, AI engine not responding", nod: "RaSh saved this page", paused: "RaSh is paused"
+  };
+  const MASCOT_ONE_SHOT = { greet: 1500, happy: 1300, smile: 1200, hello: 900, nod: 1000 }; // ms; one timeout back to rest, no loops
+
+  function mascotNode(size, state, opts) {
+    const o = opts || {};
+    const head = o.head != null ? o.head : size < 60;
+    const w = document.createElement("span");
+    w.className = "rmw" + (head ? " rm-head" : "") + (o.tiny ? " tiny" : "") + (o.small ? " sm" : "");
+    w.style.setProperty("--s", size + "px");
+    w.style.height = size + "px";
+    w.style.width = size + "px";
+    if (o.decorative) w.setAttribute("aria-hidden", "true");
+    else w.setAttribute("role", "img");
+    const float = document.createElement("span"); // dims as a whole (not found, offline, OFF)
+    float.className = "rm";
+    const react = document.createElement("span"); // the side tab's hover lift
+    react.className = "rj";
+    react.innerHTML = MARK_SVG; // fixed markup, no page or user text
+    float.appendChild(react);
+    w.appendChild(float);
+    setMascot(w, state || "idle");
+    return w;
+  }
+  function mascotState(w) {
+    const c = w ? [...w.classList].find((x) => x.startsWith("is-")) : null;
+    return c ? c.slice(3) : "idle";
+  }
+  function setMascot(w, state) {
+    if (!w) return;
+    clearTimeout(w._rmTimer);
+    const replay = !!MASCOT_ONE_SHOT[state] || mascotState(w) === state;
+    [...w.classList].filter((c) => c.startsWith("is-") || c.startsWith("fx-")).forEach((c) => w.classList.remove(c));
+    if (replay && w.isConnected) void w.getBoundingClientRect(); // lets a one-shot animation play again
+    w.classList.add("is-" + state);
+    if (w.getAttribute("role") === "img") w.setAttribute("aria-label", MASCOT_LABELS[state] || "RaSh");
+    if (MASCOT_ONE_SHOT[state]) w._rmTimer = setTimeout(() => setMascot(w, w._rmRest ? w._rmRest() : "idle"), MASCOT_ONE_SHOT[state]);
+  }
+
+  // ---------- Theme: one dark graphite set of CSS variables on the shadow host, navy accent ----------
+  // Contrast checked: text 4.5:1, icons, borders and switches 3:1. True navy (#1E3A8A) is used for filled
+  // surfaces; the same hue, lifted (#4C6BDF), for line art and controls so they stay visible on the dark panel.
+  const THEME_CSS = `
+      :host {
+        color-scheme: dark;
+        --rs-bg: #121418; --rs-surface: #1A1D23; --rs-surface2: #232731; --rs-input: #1A1D23;
+        --rs-text: #ECEEF2; --rs-text2: #A6ADBB;
+        --rs-accent: #4C6BDF; --rs-accent-text: #A9BDFF; --rs-accent-soft: #1E3A8A; --rs-cite: #ECEEF2; --rs-on-accent: #FFFFFF;
+        --rs-line: #6E7587; --rs-dot-off: #6E7587;
+        --rs-tab: #1A1D23; --rs-tab-ring: #4C6BDF; --rs-tab-text: #ECEEF2;
+        --rs-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), 0 16px 42px rgba(0, 0, 0, 0.55);
+        --rs-tab-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+      }
+  `;
+  const FONT_STACK = 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif';
 
   // ---------- Floating widget (Shadow DOM keeps it isolated from the page) ----------
   const host = document.createElement("div");
@@ -84,264 +160,284 @@
   shadow.innerHTML = `
     <style>
       :host { all: initial; }
+${THEME_CSS}
       * { box-sizing: border-box; }
       .wrap {
         position: fixed; top: 50%; right: 0; display: flex; align-items: center;
-        font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-        font-size: 13px; line-height: 1.5; color: #F2F2F4; -webkit-font-smoothing: antialiased;
-        transform: translateY(-50%) translateX(calc(100% - 28px));
-        transition: transform 0.2s ease;
+        font-family: ${FONT_STACK};
+        font-size: 13px; line-height: 1.5; color: var(--rs-text); -webkit-font-smoothing: antialiased;
+        transform: translateY(-50%);
       }
-      .wrap.open { transform: translateY(-50%) translateX(0); }
       button { font-family: inherit; }
-      .switch:focus-visible, .x:focus-visible, .chip:focus-visible, .send:focus-visible,
-      .mic:focus-visible, .btn:focus-visible, .dock:focus-visible, a.source:focus-visible {
-        outline: 2px solid rgba(242,242,244,0.55); outline-offset: 2px;
+      .switch:focus-visible, .x:focus-visible, .chip:focus-visible, .send:focus-visible, .mic:focus-visible, .btn:focus-visible,
+      .dock:focus-visible, a.source:focus-visible, .src:focus-visible, .cite:focus-visible, .seg button:focus-visible {
+        outline: 2px solid var(--rs-accent); outline-offset: 2px;
       }
 
-      /* ---- Panel ---- */
+      /* ---- Panel: one soft two-layer shadow lifts it off busy pages (no hairline borders anywhere) ---- */
       .panel {
         display: none; flex-direction: column;
-        width: 360px; max-width: calc(100vw - 76px); max-height: min(560px, 80vh);
-        margin-right: 10px;
-        background: rgba(17,17,20,0.94);
-        -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);
-        border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; overflow: hidden;
-        box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+        width: 360px; max-width: calc(100vw - 24px); max-height: min(560px, 80vh);
+        margin-right: 12px;
+        background: var(--rs-bg); color: var(--rs-text);
+        border-radius: 18px; overflow: hidden;
+        box-shadow: var(--rs-shadow);
+        transform-origin: right center;
       }
-      .panel.show { display: flex; animation: enter 0.2s ease; }
-      @keyframes enter { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+      .panel.show { display: flex; animation: enter 0.24s cubic-bezier(0.2, 0.8, 0.2, 1); }
+      @keyframes enter { from { opacity: 0; transform: translateX(8px) scale(0.97); } to { opacity: 1; transform: none; } }
 
-      .head {
-        display: flex; align-items: center; gap: 10px; padding: 14px 12px 12px 16px;
-        border-bottom: 1px solid rgba(255,255,255,0.06);
-      }
-      .logo {
-        width: 28px; height: 28px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-        border-radius: 8px; background: #1A1A1F; border: 1px solid rgba(255,255,255,0.1);
-        color: #F2F2F4; font-weight: 600; font-size: 13px;
-      }
+      /* gap 8 and the icon buttons a little closer, so "Saving pages" stays on one line */
+      .head { display: flex; align-items: center; gap: 8px; padding: 14px 10px 10px 14px; }
+      .head .x:not([hidden]) + .x { margin-left: -4px; }
+      .logo { width: 34px; height: 34px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
       .titles { flex: 1; min-width: 0; }
-      .ttl { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; color: #F2F2F4; }
-      .sub { font-size: 12px; color: #9A9AA5; display: flex; align-items: center; gap: 6px; }
-      .dot { width: 6px; height: 6px; border-radius: 50%; background: #55555E; transition: background 0.2s ease; }
-      .dot.on { background: #2FBF71; }
-      .onoff { flex-shrink: 0; font-size: 12px; font-weight: 500; white-space: nowrap; color: #9A9AA5; transition: color 0.2s ease; }
-      .onoff.on { color: #2FBF71; }
+      .ttl { font-weight: 650; font-size: 14px; letter-spacing: -0.01em; color: var(--rs-text); white-space: nowrap; }
+      .sub { font-size: 12px; color: var(--rs-text2); display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
+      .sub span:last-child { overflow: hidden; text-overflow: ellipsis; }
+      .dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--rs-dot-off); }
+      .dot.on { background: var(--rs-accent); }
+      .onoff { flex-shrink: 0; font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--rs-text2); }
+      .onoff.on { color: var(--rs-accent-text); }
 
+      /* Switch: OFF is an outlined track with a small knob; ON fills with the accent (fades in) and the knob slides */
       .switch {
         all: unset; cursor: pointer; position: relative; flex-shrink: 0;
-        width: 38px; height: 22px; border-radius: 999px; background: #3A3A42;
-        transition: background 0.2s ease;
+        width: 38px; height: 22px; border-radius: 999px; background: var(--rs-surface2); box-shadow: inset 0 0 0 1.5px var(--rs-line);
       }
+      .switch::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--rs-accent); opacity: 0; transition: opacity 0.2s ease; }
       .switch::after {
         content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
-        border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.35);
-        transition: transform 0.2s ease;
+        border-radius: 50%; background: var(--rs-text2); transform: scale(0.7); transition: transform 0.2s ease;
       }
-      .switch.on { background: #2FBF71; }
-      .switch.on::after { transform: translateX(16px); }
+      .switch.on::before { opacity: 1; }
+      .switch.on::after { background: var(--rs-on-accent); transform: translateX(16px); box-shadow: 0 1px 2px rgba(0,0,0,0.25); }
 
       .x {
-        all: unset; cursor: pointer; width: 28px; height: 28px; flex-shrink: 0;
-        display: flex; align-items: center; justify-content: center;
-        border-radius: 8px; color: #9A9AA5; transition: background 0.2s ease, color 0.2s ease;
+        all: unset; cursor: pointer; width: 30px; height: 30px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center; border-radius: 10px; color: var(--rs-text2);
       }
-      .x:hover { background: rgba(255,255,255,0.07); color: #F2F2F4; }
+      .x:hover { background: var(--rs-surface2); color: var(--rs-text); }
       .x[hidden] { display: none; }
 
       /* ---- Attached file (paperclip / drag-and-drop) ---- */
       .attach-row[hidden] { display: none; }
       .attach-row { padding: 0 16px; }
       .attach-row .card { padding: 10px 12px; }
-      .attach-row .file { padding: 0; border: none; }
-      .panel.drag-over { outline: 2px dashed rgba(255,255,255,0.4); outline-offset: -2px; }
+      .attach-row .file { padding: 0; background: none; }
+      .panel.drag-over { outline: 2px dashed var(--rs-accent); outline-offset: -4px; }
       .x.confirm {
-        width: auto; padding: 0 9px; font-size: 12px; font-weight: 500; white-space: nowrap;
-        color: #E6B8BA; border: 1px solid rgba(229,72,77,0.35); background: rgba(229,72,77,0.06);
+        width: auto; padding: 0 9px; font-size: 12px; font-weight: 600; white-space: nowrap;
+        color: var(--rs-accent-text); background: var(--rs-accent-soft); box-shadow: inset 0 0 0 1.5px var(--rs-accent);
       }
 
       /* ---- Conversation ---- */
-      .chat {
-        flex: 1; min-height: 160px; overflow-y: auto; padding: 16px;
-        display: flex; flex-direction: column; gap: 12px;
-        scrollbar-width: thin; scrollbar-color: #3A3A42 transparent;
-      }
-      .empty { text-align: center; padding: 14px 4px 4px; color: #9A9AA5; }
-      .empty .big { font-size: 15px; font-weight: 600; color: #F2F2F4; margin-bottom: 4px; letter-spacing: -0.01em; }
+      .chat { flex: 1; min-height: 160px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+      /* Thin rounded scrollbar; overflow:auto means it only appears when there is something to scroll */
+      .chat::-webkit-scrollbar { width: 10px; }
+      .chat::-webkit-scrollbar-track { background: transparent; }
+      .chat::-webkit-scrollbar-thumb { background: var(--rs-line); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+      .chat::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+      /* Empty chat: the mark, a greeting, and three suggestions */
+      .empty { text-align: center; padding: 2px 4px 4px; color: var(--rs-text2); }
+      .hero { display: flex; justify-content: center; margin: 6px 0 14px; }
+      .empty .big { font-size: 16px; font-weight: 650; color: var(--rs-text); margin-bottom: 4px; letter-spacing: -0.01em; text-wrap: balance; }
+      .empty .lede { font-size: 12.5px; color: var(--rs-text2); text-wrap: balance; }
+      .empty .big, .empty .lede { animation: rise 0.32s ease both; }
+      .empty .lede { animation-delay: 0.04s; }
       .chips { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
       .chip {
-        all: unset; cursor: pointer; text-align: left; padding: 10px 12px; border-radius: 10px;
-        border: 1px solid rgba(255,255,255,0.1); color: #C9C9D1; font-size: 13px;
-        transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+        all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 10px; width: 100%;
+        padding: 8px 12px 8px 8px; border-radius: 12px; text-align: left;
+        background: var(--rs-surface2); color: var(--rs-text); font-size: 13px;
+        animation: rise 0.32s ease both;
       }
-      .chip:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.18); color: #F2F2F4; }
+      .chip:nth-child(2) { animation-delay: 0.05s; }
+      .chip:nth-child(3) { animation-delay: 0.1s; }
+      .chip .ci {
+        flex-shrink: 0; width: 28px; height: 28px; border-radius: 9px; display: flex; align-items: center; justify-content: center;
+        background: var(--rs-surface); color: var(--rs-text2);
+      }
+      .chip .ct { flex: 1; min-width: 0; }
+      .chip .ca { flex-shrink: 0; display: flex; color: var(--rs-accent-text); opacity: 0; transform: translateX(-4px); transition: opacity 0.2s ease, transform 0.2s ease; }
+      .chip:hover, .chip:focus-visible { background: var(--rs-accent-soft); }
+      .chip:hover .ci, .chip:focus-visible .ci { color: var(--rs-accent-text); }
+      .chip:hover .ca, .chip:focus-visible .ca { opacity: 1; transform: none; }
+      .chip.sm { padding: 6px 10px 6px 6px; font-size: 12.5px; }
+      .chip.sm .ci { width: 24px; height: 24px; border-radius: 8px; }
+      @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+      /* After "not found": up to two follow-up questions */
+      .follow { display: flex; flex-direction: column; gap: 6px; }
+      .follow .fl { font-size: 12px; color: var(--rs-text2); margin: 0 2px; }
 
       .me {
         align-self: flex-end; max-width: 85%; padding: 8px 12px; word-break: break-word;
-        background: #24242B; color: #F2F2F4; border-radius: 12px 12px 4px 12px;
+        background: var(--rs-accent-soft); color: var(--rs-text); border-radius: 14px 14px 4px 14px;
       }
-      .card {
-        align-self: stretch; padding: 12px 14px; border-radius: 12px;
-        background: transparent; border: 1px solid rgba(255,255,255,0.08);
+      .card { align-self: stretch; padding: 16px 14px 12px; border-radius: 14px; position: relative; background: var(--rs-surface); color: var(--rs-text); }
+      /* The newest answer's avatar sits on the card's top edge, in a ring of the panel colour */
+      .card > .peek {
+        position: absolute; top: -13px; left: 10px; width: 30px; height: 30px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center; background: var(--rs-bg);
       }
-      .card.muted { color: #9A9AA5; }
-      .card.error { border-color: rgba(229,72,77,0.35); background: rgba(229,72,77,0.05); color: #E6B8BA; }
-      .label {
-        font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase;
-        color: #9A9AA5; margin-bottom: 6px;
-      }
-      .ctitle { font-weight: 600; color: #F2F2F4; margin-bottom: 4px; word-break: break-word; letter-spacing: -0.005em; }
-      .body { color: #D4D4DA; word-break: break-word; white-space: pre-wrap; }
-      .meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 12px; font-size: 12px; color: #9A9AA5; }
+      .card.muted { color: var(--rs-text2); }
+      .card.error { color: var(--rs-text); box-shadow: inset 3px 0 0 var(--rs-accent); }
+      .label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--rs-text2); margin-bottom: 6px; }
+      .ctitle { font-weight: 650; color: var(--rs-text); margin-bottom: 4px; word-break: break-word; letter-spacing: -0.005em; }
+      .body { color: var(--rs-text); word-break: break-word; white-space: pre-wrap; }
+      .meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 12px; font-size: 12px; color: var(--rs-text2); }
       a.source {
         display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
-        padding: 3px 10px; border-radius: 999px; text-decoration: none;
-        border: 1px solid rgba(255,255,255,0.12); color: #C9C9D1;
+        padding: 3px 10px; border-radius: 999px; text-decoration: none; background: var(--rs-surface2); color: var(--rs-text);
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        transition: background 0.2s ease, color 0.2s ease;
       }
-      a.source:hover { background: rgba(255,255,255,0.06); color: #F2F2F4; }
+      a.source:hover { background: var(--rs-accent-soft); }
       a.source svg { flex-shrink: 0; }
 
       /* Sources under an answer, and the [n] badges in its text that point at them */
       .cite {
-        all: unset; cursor: pointer; display: inline-block; min-width: 9px; padding: 0 4px; margin: 0 1px;
-        font-size: 10.5px; line-height: 15px; text-align: center; vertical-align: 1px;
-        border-radius: 5px; background: rgba(255,255,255,0.08); color: #C9C9D1;
-        transition: background 0.2s ease, color 0.2s ease;
+        all: unset; cursor: pointer; display: inline-block; min-width: 9px; padding: 0 5px; margin: 0 1px;
+        font-size: 10.5px; font-weight: 650; line-height: 16px; text-align: center; vertical-align: 1px;
+        border-radius: 6px; background: var(--rs-accent-soft); color: var(--rs-cite);
       }
-      .cite:hover, .cite:focus-visible { background: rgba(47,191,113,0.18); color: #F2F2F4; }
+      .cite:hover, .cite:focus-visible { background: var(--rs-accent); color: var(--rs-on-accent); }
       .srcs { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
       .src {
         all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 9px; width: 100%;
-        padding: 6px 9px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.08); cursor: pointer;
-        font-family: inherit; transition: background 0.2s ease, border-color 0.2s ease;
+        padding: 7px 10px; border-radius: 11px; background: var(--rs-surface2); cursor: pointer; font-family: inherit;
       }
-      .src:hover, .src:focus-visible { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.16); }
+      .src:hover, .src:focus-visible { background: var(--rs-accent-soft); }
       .src.static { cursor: default; }
-      .src.static:hover { background: transparent; border-color: rgba(255,255,255,0.08); }
-      .src.flash { border-color: rgba(47,191,113,0.55); background: rgba(47,191,113,0.07); }
-      .src .n { flex-shrink: 0; min-width: 10px; font-size: 10.5px; color: #8A8A94; text-align: right; }
+      .src.static:hover { background: var(--rs-surface2); }
+      .src.flash { background: var(--rs-accent-soft); box-shadow: inset 0 0 0 1.5px var(--rs-accent); }
+      .src .n { flex-shrink: 0; min-width: 10px; font-size: 10.5px; color: var(--rs-text2); text-align: right; }
       .src .av {
-        flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; background: #1A1A1F; color: #C9C9D1;
-        display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600;
+        flex-shrink: 0; width: 24px; height: 24px; border-radius: 7px; background: var(--rs-surface); color: var(--rs-text);
+        display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 650;
       }
       .src .txt { min-width: 0; flex: 1; display: flex; flex-direction: column; }
-      .src .st { color: #E4E4E8; font-size: 12.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .src .sm { color: #9A9AA5; font-size: 11.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .card.calm { background: rgba(255,255,255,0.02); color: #C9C9D1; }
-      .tip { margin-top: 6px; font-size: 12px; color: #8A8A94; }
+      .src .st { color: var(--rs-text); font-size: 12.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .src .sm { color: var(--rs-text2); font-size: 11.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .card.calm { color: var(--rs-text); }
+      .tip { margin-top: 6px; font-size: 12px; color: var(--rs-text2); }
 
-      .file {
-        display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; margin-top: 8px;
-        border-radius: 10px; border: 1px solid rgba(255,255,255,0.08);
-      }
+      .file { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; margin-top: 8px; border-radius: 12px; background: var(--rs-surface2); }
       .frow1 { display: flex; gap: 10px; align-items: center; }
       .ficon {
         width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-        border-radius: 8px; background: #1A1A1F; color: #9A9AA5;
+        border-radius: 9px; background: var(--rs-surface); color: var(--rs-text2);
       }
-      .fname { font-weight: 500; color: #F2F2F4; word-break: break-word; }
-      .fpath { font-size: 12px; color: #9A9AA5; }
+      .fname { font-weight: 600; color: var(--rs-text); word-break: break-word; }
+      .fpath { font-size: 12px; color: var(--rs-text2); }
       .frow { display: flex; gap: 8px; }
       .btn {
-        all: unset; cursor: pointer; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 500;
-        background: #F2F2F4; color: #111114; transition: background 0.2s ease, border-color 0.2s ease;
+        all: unset; cursor: pointer; padding: 6px 12px; border-radius: 10px; font-size: 12px; font-weight: 600;
+        background: var(--rs-accent); color: var(--rs-on-accent); transition: transform 0.15s ease;
       }
-      .btn:hover { background: #FFFFFF; }
-      .btn.ghost { background: transparent; color: #F2F2F4; border: 1px solid rgba(255,255,255,0.14); padding: 5px 11px; }
-      .btn.ghost:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.22); }
+      .btn:hover { transform: translateY(-1px); }
+      .btn.ghost { background: transparent; color: var(--rs-text); box-shadow: inset 0 0 0 1px var(--rs-line); }
+      .btn.ghost:hover { background: var(--rs-surface2); transform: none; }
 
-      .thinking {
-        align-self: flex-start; display: flex; gap: 5px; padding: 12px 14px; border-radius: 12px;
-        border: 1px solid rgba(255,255,255,0.08);
+      /* ---- Searching: the pulsing mark, a small prop for what RaSh is looking through, and one honest line ---- */
+      .thinkrow { align-self: flex-start; display: flex; align-items: center; gap: 8px; }
+      .thinkbub {
+        display: flex; align-items: center; gap: 8px; padding: 7px 12px 7px 9px; border-radius: 14px;
+        background: var(--rs-surface); color: var(--rs-text2); font-size: 12.5px;
       }
-      .thinking i { width: 5px; height: 5px; border-radius: 50%; background: #9A9AA5; animation: blink 1.1s infinite ease-in-out; }
-      .thinking i:nth-child(2) { animation-delay: 0.15s; }
-      .thinking i:nth-child(3) { animation-delay: 0.3s; }
-      @keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+      .thinkbub:empty { display: none; }
+      .prop { width: 20px; height: 20px; flex-shrink: 0; color: var(--rs-accent); overflow: visible; }
+      .pr-paper { animation: pr-bob 1.4s ease-in-out infinite; }
+      .pr-tri { transform-box: fill-box; transform-origin: center; animation: pr-pulse 1.2s ease-in-out infinite; }
+      .pr-hands { transform-box: view-box; transform-origin: 12px 12px; animation: pr-rewind 1.8s linear infinite; }
+      .pr-sheet { transform-box: fill-box; transform-origin: 50% 0; animation: pr-flip 1.6s ease-in-out infinite; }
+      .pr-meridian { transform-box: fill-box; transform-origin: center; animation: pr-spin 1.8s ease-in-out infinite; }
+      .pr-scan { animation: pr-scan 1.6s ease-in-out infinite; }
+      .pr-glass { animation: pr-orbit 1.8s ease-in-out infinite; }
+      @keyframes pr-bob { 0%, 100% { transform: translateY(1.5px); } 50% { transform: translateY(-2px); } }
+      @keyframes pr-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.22); } }
+      @keyframes pr-rewind { to { transform: rotate(-360deg); } }
+      @keyframes pr-flip { 0%, 30% { transform: scaleY(1); opacity: 1; } 50% { transform: scaleY(0); opacity: 0.2; } 70%, 100% { transform: scaleY(1); opacity: 1; } }
+      @keyframes pr-spin { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(0.12); } }
+      @keyframes pr-scan { 0% { transform: translateY(0); opacity: 0; } 15%, 85% { opacity: 0.9; } 100% { transform: translateY(8px); opacity: 0; } }
+      @keyframes pr-orbit { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(1.5px, -1.5px); } 50% { transform: translate(0, -3px); } 75% { transform: translate(-1.5px, -1.5px); } }
 
       /* ---- Input ---- */
-      .foot { display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(255,255,255,0.06); }
-      input {
-        flex: 1; min-width: 0; height: 36px; padding: 0 12px; border-radius: 10px; outline: none;
-        border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04);
-        color: #F2F2F4; font-size: 13px; font-family: inherit;
-        transition: border-color 0.2s ease, background 0.2s ease;
+      .foot { display: flex; gap: 8px; padding: 10px 12px 12px; }
+      input[type="text"] {
+        flex: 1; min-width: 0; height: 38px; padding: 0 12px; border-radius: 12px; outline: none;
+        border: 1px solid var(--rs-line); background: var(--rs-input); color: var(--rs-text); font-size: 13px; font-family: inherit;
       }
-      input::placeholder { color: #6E6E78; }
-      input:focus { border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.06); }
+      input[type="text"]::placeholder { color: var(--rs-text2); }
+      input[type="text"]:focus { border-color: var(--rs-accent); box-shadow: 0 0 0 1px var(--rs-accent); }
+      input[type="checkbox"] { accent-color: var(--rs-accent); }
       .mic, .send {
-        all: unset; box-sizing: border-box; cursor: pointer; width: 36px; height: 36px; flex-shrink: 0;
-        display: flex; align-items: center; justify-content: center; border-radius: 10px;
-        transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+        all: unset; box-sizing: border-box; cursor: pointer; position: relative; width: 38px; height: 38px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center; border-radius: 12px;
       }
-      .mic { border: 1px solid rgba(255,255,255,0.1); color: #C9C9D1; }
-      .mic:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.18); }
-      .mic.listening { border-color: rgba(229,72,77,0.55); background: rgba(229,72,77,0.12); color: #F0A9AC; animation: pulse 1.2s infinite; }
-      .send { background: #F2F2F4; color: #111114; }
-      .send:hover { background: #FFFFFF; }
-      @keyframes pulse {
-        0% { box-shadow: 0 0 0 0 rgba(229,72,77,0.35); }
-        70% { box-shadow: 0 0 0 7px rgba(229,72,77,0); }
-        100% { box-shadow: 0 0 0 0 rgba(229,72,77,0); }
+      .mic { box-shadow: inset 0 0 0 1px var(--rs-line); color: var(--rs-text2); }
+      .mic:hover { background: var(--rs-surface2); color: var(--rs-text); }
+      .mic.listening { background: var(--rs-accent-soft); color: var(--rs-accent-text); box-shadow: inset 0 0 0 1.5px var(--rs-accent); }
+      .mic.listening::after {
+        content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: 0 0 0 2px var(--rs-accent);
+        animation: ring 1.2s ease-out infinite; pointer-events: none;
       }
+      @keyframes ring { from { opacity: 0.7; transform: scale(1); } to { opacity: 0; transform: scale(1.3); } }
+      .send { background: var(--rs-accent); color: var(--rs-on-accent); transition: transform 0.15s ease; }
+      .send:hover { transform: translateY(-1px); }
 
       /* ---- Status pill ---- */
       .status {
         display: none; position: absolute; right: 12px; bottom: calc(100% + 10px);
-        font-size: 12px; color: #F2F2F4; white-space: nowrap;
-        background: rgba(17,17,20,0.94); border: 1px solid rgba(255,255,255,0.08);
-        padding: 6px 12px; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        font-size: 12px; color: var(--rs-text); white-space: nowrap; background: var(--rs-surface);
+        box-shadow: var(--rs-tab-shadow), inset 0 0 0 1.5px var(--rs-tab-ring); padding: 6px 12px; border-radius: 999px;
       }
 
-      /* ---- Edge tab (slim pill; the "Ask" label slides out with the widget) ---- */
+      /* ---- Side tab: a soft pill on the page edge. Hover shows an "Ask RaSh" label beside it. ---- */
       .dock {
-        all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: stretch;
-        filter: drop-shadow(0 8px 20px rgba(0,0,0,0.4));
+        all: unset; box-sizing: border-box; cursor: pointer; position: relative; display: flex;
+        transition: transform 0.22s ease, opacity 0.22s ease, visibility 0s linear 0s;
       }
-      .dock .lbl, .dock .strip {
-        background: #131316; border: 1px solid rgba(255,255,255,0.08); border-right: none;
-        transition: background 0.2s ease;
-      }
-      /* The slim pill (always visible on the edge) comes first; the "Ask" label follows and slides out with it */
       .dock .strip {
-        width: 28px; padding: 14px 0; border-radius: 12px 0 0 12px;
-        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+        width: 32px; padding: 7px 0 12px; display: flex; flex-direction: column; align-items: center; gap: 7px;
+        background: var(--rs-tab); border: 1.5px solid var(--rs-tab-ring); border-right: none; border-radius: 16px 0 0 16px;
+        box-shadow: var(--rs-tab-shadow);
       }
       .dock .lbl {
-        width: 46px; border-radius: 0; display: flex; align-items: center; justify-content: center;
-        font-size: 12px; font-weight: 500; color: #C9C9D1;
+        position: absolute; right: calc(100% + 6px); top: 50%; padding: 4px 10px; border-radius: 999px; white-space: nowrap; pointer-events: none;
+        background: var(--rs-tab); border: 1.5px solid var(--rs-tab-ring); color: var(--rs-tab-text); font-size: 12px; font-weight: 600;
+        box-shadow: var(--rs-tab-shadow); opacity: 0; transform: translate(6px, -50%); transition: opacity 0.2s ease, transform 0.2s ease;
       }
-      .dock:hover .lbl, .dock:hover .strip { background: #19191D; }
+      .wrap.open .dock .lbl, .dock:focus-visible .lbl { opacity: 1; transform: translate(0, -50%); }
       .dock .name {
         writing-mode: vertical-rl; transform: rotate(180deg);
-        font-size: 10px; font-weight: 600; letter-spacing: 0.14em; color: #B4B4BD;
+        font-size: 10px; font-weight: 700; letter-spacing: 0.14em; color: var(--rs-tab-text);
       }
-      .dock .state { width: 6px; height: 6px; border-radius: 50%; background: #2FBF71; opacity: 0; transition: opacity 0.2s ease; }
-      .dock .state.on { opacity: 1; }
+      .dock .state { width: 6px; height: 6px; border-radius: 50%; background: var(--rs-accent); opacity: 0; transition: opacity 0.2s ease; }
+      /* While the panel is open the tab tucks away off the edge, so it never sits beside the panel like a second widget */
+      .panel.show ~ .dock {
+        position: absolute; right: 0; top: 0; bottom: 0; margin: auto 0; height: max-content;
+        opacity: 0; transform: translateX(100%); pointer-events: none; visibility: hidden;
+        transition: transform 0.22s ease, opacity 0.22s ease, visibility 0s linear 0.22s;
+      }
 
       /* ---- "RaSh is watching" pulse (only while ON) and save toast ---- */
-      .dock .state.on { animation: watch 2.6s ease-in-out infinite; }
+      .dock .state.on { opacity: 1; animation: watch 2.6s ease-in-out infinite; }
       @keyframes watch { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
       .toast {
         position: fixed; top: 16px; right: 16px; max-width: min(320px, calc(100vw - 32px));
         padding: 8px 14px; border-radius: 999px; pointer-events: none;
-        background: rgba(17,17,20,0.94); border: 1px solid rgba(255,255,255,0.1);
-        box-shadow: 0 8px 24px rgba(0,0,0,0.4); color: #F2F2F4;
-        font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 12px; line-height: 1.4;
+        background: var(--rs-surface); box-shadow: var(--rs-tab-shadow), inset 0 0 0 1.5px var(--rs-tab-ring); color: var(--rs-text);
+        font-family: ${FONT_STACK}; font-size: 12px; line-height: 1.4;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         opacity: 0; transform: translateY(-6px); transition: opacity 0.2s ease, transform 0.2s ease;
       }
       .toast.show { opacity: 1; transform: none; }
 
-      /* ---- Form consent panel ---- */
+      /* ---- Form consent panel (also the options popover and the one-time notices) ---- */
       .consent {
         position: fixed; right: 16px; bottom: 16px; width: 340px; max-width: calc(100vw - 32px);
-        padding: 16px; border-radius: 14px; background: rgba(17,17,20,0.97);
-        border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 12px 40px rgba(0,0,0,0.5);
-        font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; line-height: 1.5; color: #F2F2F4;
+        padding: 16px; border-radius: 16px; background: var(--rs-bg); box-shadow: var(--rs-shadow);
+        font-family: ${FONT_STACK}; font-size: 13px; line-height: 1.5; color: var(--rs-text);
       }
       .consent .ctext { margin-bottom: 12px; }
       .consent .crow { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -349,21 +445,55 @@
       /* ---- "Hey RaSh" wake-phrase row ---- */
       .wakerow {
         display: flex; align-items: center; justify-content: space-between; gap: 10px;
-        padding: 9px 16px; border-bottom: 1px solid rgba(255,255,255,0.06);
-        font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-        font-size: 12px; color: #9A9AA5;
+        margin: 0 12px; padding: 6px 8px 6px 12px; border-radius: 12px; background: var(--rs-surface2);
+        font-size: 12px; color: var(--rs-text2);
       }
-      .wakerow.on { color: #C9C9D1; }
+      .wakerow.on { color: var(--rs-text); }
 
+      /* ================= RaSh's mark: states show only as light (opacity and scale) ================= */
+      .rmw { position: relative; display: inline-block; flex-shrink: 0; line-height: 0; color: var(--rs-accent); }
+      .rmw > .rm, .rmw .rj { position: absolute; inset: 0; display: block; }
+      .rmw .rj { transition: transform 0.2s ease; }
+      .rmw .mk { width: 100%; height: 100%; display: block; overflow: visible; }
+      .rmw .mk-halo { fill: var(--rs-accent); opacity: 0; transform-box: fill-box; transform-origin: center; }
+      .rmw .mk-core { transform-box: fill-box; transform-origin: center; }
+      /* Searching: a slow, gentle pulse */
+      .rmw.is-thinking .mk-halo { animation: mk-pulse 1.6s ease-in-out infinite; }
+      .rmw.is-thinking .mk-core { animation: mk-core 1.6s ease-in-out infinite; }
+      /* Listening, or an answer streaming in: a steady soft glow */
+      .rmw.is-listening .mk-halo, .rmw.is-talking .mk-halo { opacity: 0.22; }
+      /* A found answer, a quick reply, or the side tab saving this page: one brief, brighter flash */
+      .rmw.is-happy .mk-halo, .rmw.is-smile .mk-halo, .rmw.is-nod .mk-halo { animation: mk-flash 0.7s ease-out; }
+      .rmw.is-happy .mk-core, .rmw.is-smile .mk-core, .rmw.is-nod .mk-core { animation: mk-pop 0.7s ease-out; }
+      /* Nothing found, AI engine or server down, RaSh OFF: dim and still */
+      .rmw.is-notfound > .rm, .rmw.is-offline > .rm { opacity: 0.5; }
+      .rmw.is-paused > .rm { opacity: 0.4; }
+      @keyframes mk-pulse { 0%, 100% { opacity: 0; transform: scale(0.85); } 50% { opacity: 0.3; transform: scale(1); } }
+      @keyframes mk-core { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.3); } }
+      @keyframes mk-flash { 0% { opacity: 0; } 25% { opacity: 0.55; } 100% { opacity: 0; } }
+      @keyframes mk-pop { 0%, 100% { transform: scale(1); } 25% { transform: scale(1.35); } }
+
+      /* ---- The side tab's mark: always on screen, so it stays still unless something real happens ---- */
+      .dock .face { display: flex; }
+      .dock:hover .rmw.is-idle .rj, .dock:focus-visible .rmw.is-idle .rj { transform: scale(1.08); }
+
+      /* "Animated character" switched OFF in the options, or reduced motion: nothing moves, the states still show */
+      .wrap.still .rmw, .wrap.still .rmw *, .wrap.still .prop * { animation: none !important; transition: none !important; }
+      .wrap.still .rmw.is-thinking .mk-halo { opacity: 0.22; }
+      .wrap.still .rmw.is-happy .mk-halo, .wrap.still .rmw.is-smile .mk-halo, .wrap.still .rmw.is-nod .mk-halo { opacity: 0.35; }
+      .setrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: var(--rs-text); }
+      /* Reduced motion: nothing moves or fades, but the mark still shows each state */
       @media (prefers-reduced-motion: reduce) {
-        * { animation: none !important; transition: none !important; }
+        *, *::before, *::after { animation: none !important; transition: none !important; }
+        .rmw.is-thinking .mk-halo { opacity: 0.22; }
+        .rmw.is-happy .mk-halo, .rmw.is-smile .mk-halo, .rmw.is-nod .mk-halo { opacity: 0.35; }
       }
     </style>
     <div class="wrap" id="wrap">
       <div class="status" id="status"></div>
       <div class="panel" id="panel" role="dialog" aria-label="Ask RaSh">
         <div class="head">
-          <div class="logo">R</div>
+          <div class="logo" id="logo"></div>
           <div class="titles">
             <div class="ttl">Ask RaSh</div>
             <div class="sub"><span class="dot" id="dot"></span><span id="subtext">Not saving pages</span></div>
@@ -391,8 +521,8 @@
         </div>
       </div>
       <button id="ask" class="dock" title="Ask RaSh">
-        <span class="strip"><span class="state" id="state"></span><span class="name" aria-hidden="true">RaSh</span></span>
-        <span class="lbl">Ask</span>
+        <span class="strip"><span class="face" id="dockFace"></span><span class="state" id="state"></span><span class="name" aria-hidden="true">RaSh</span></span>
+        <span class="lbl" aria-hidden="true">Ask RaSh</span>
       </button>
     </div>
   `;
@@ -417,6 +547,54 @@
   const subEl = shadow.getElementById("subtext");
   const stateEl = shadow.getElementById("state");
   const onoffEl = shadow.getElementById("onoff");
+  const headerMascot = mascotNode(34, "idle");
+  shadow.getElementById("logo").appendChild(headerMascot);
+
+  // ---------- The side tab's mark (22px): on every page, so it stays still ----------
+  // It reacts only to real events: this page saved (one flash, at most once per page), the local server not
+  // reachable (dim), RaSh switched OFF (dimmer), hover, and "Hey RaSh" heard (a glow). At most one reaction
+  // every 30 s; the paused and offline states always show.
+  const dockMascot = mascotNode(22, "idle", { tiny: true, decorative: true }); // the button itself carries the label
+  shadow.getElementById("dockFace").appendChild(dockMascot);
+  const DOCK_TIPS = { idle: "Ask RaSh", paused: "RaSh is paused", offline: "RaSh's server isn't running" };
+  const CHARACTER_KEY = "rashCharacterAnimated"; // the "Animated character" option, shared by every tab
+  let characterAnimated = true;
+  let stateKnown = false;   // until the ON/OFF state arrives, don't show "paused"
+  let serverDown = false;   // from save and answer results this tab already gets; the server is never polled
+  let lastDockReactionAt = 0;
+  let nodHref = "";
+  dockMascot._rmRest = dockState;
+
+  function dockState() {
+    if (!stateKnown) return "idle";
+    return !enabled ? "paused" : serverDown ? "offline" : "idle";
+  }
+  function syncDock() {
+    const st = dockState();
+    const cur = mascotState(dockMascot);
+    const reacting = cur === "nod" || cur === "listening"; // a reaction finishes on its own
+    if (cur !== st && !(st === "idle" && reacting)) setMascot(dockMascot, st);
+    askBtn.title = DOCK_TIPS[st];
+    askBtn.setAttribute("aria-label", DOCK_TIPS[st]);
+  }
+  function dockReact(state) {
+    if (dockState() !== "idle" || Date.now() - lastDockReactionAt < 30000) return false;
+    lastDockReactionAt = Date.now();
+    setMascot(dockMascot, state);
+    return true;
+  }
+  // A save or an answer this tab already asked for: a failed fetch means the local server isn't running
+  function noteServerResult(res) {
+    if (res && res.ok === false && res.error && !serverDown) { serverDown = true; syncDock(); }
+    else if (res && res.ok && serverDown) { serverDown = false; syncDock(); }
+  }
+  function applyCharacterAnimated(on) {
+    characterAnimated = on !== false;
+    wrap.classList.toggle("still", !characterAnimated);
+  }
+  try {
+    chrome.storage.local.get(CHARACTER_KEY, (r) => { if (!chrome.runtime.lastError && r) applyCharacterAnimated(r[CHARACTER_KEY]); });
+  } catch (e) {}
 
   // ---------- Slide in / slide out ----------
   let closeTimer = null;
@@ -442,6 +620,7 @@
     onoffEl.textContent = enabled ? "RaSh ON" : "RaSh OFF";
     onoffEl.classList.toggle("on", enabled);
     if (!enabled) { closeSensitive(); closeDest(); } // OFF discards anything waiting for an answer
+    syncDock();
   }
 
   let statusTimer = null;
@@ -466,10 +645,21 @@
   }
 
   // ---------- Ask panel: open / close ----------
+  let greetedInTab = false; // a hop and a wave the first time the panel opens in this tab, a blink and a smile after that
   function openPanel() {
+    const wasOpen = panelOpen;
     panelOpen = true;
     panel.classList.add("show");
     openWidget();
+    if (!wasOpen) {
+      greetTurn++; // a fresh greeting, suggestions and placeholder each time the panel opens
+      const empty = answerEl.querySelector(".empty");
+      if (empty) { empty.remove(); showEmptyState(); }
+      else input.placeholder = placeholderFor(siteKind(location.hostname), greetTurn, []);
+      const m = primaryMascot();
+      if (!busy && mascotState(m) === "idle") setMascot(m, greetedInTab ? "hello" : "greet");
+      greetedInTab = true;
+    }
     scrollToEnd(); // messages may have arrived while the panel was hidden
     input.focus();
   }
@@ -514,6 +704,7 @@
     recognizer.onend = () => {
       listening = false;
       micBtn.classList.remove("listening");
+      syncListening();
     };
   } else {
     micBtn.style.display = "none"; // browser doesn't support speech recognition
@@ -525,6 +716,7 @@
       recognizer.stop();
       listening = false;
       micBtn.classList.remove("listening");
+      syncListening();
       return;
     }
     openPanel();
@@ -532,6 +724,7 @@
       recognizer.start();
       listening = true;
       micBtn.classList.add("listening");
+      syncListening();
       setStatus("Listening...");
     } catch (e) {
       // start() throws if called twice in a row too quickly; ignore
@@ -546,6 +739,7 @@
   const WAKE_WORD = "(?:hey\\s+)?(?:rash|rashe|rasch|rach|rush|rosh|rosch|roach|roche|raj|ra\\s*sh)\\b";
   const WAKE_ON = new RegExp(WAKE_WORD + ".{0,12}\\bturn(?:ed)?\\s+on\\b", "i");
   const WAKE_OFF = new RegExp(WAKE_WORD + ".{0,12}\\bturn(?:ed)?\\s+off\\b", "i");
+  const WAKE_HEARD = new RegExp("\\bhey\\s+" + WAKE_WORD, "i"); // "Hey RaSh" itself: the mark shows it heard
 
   // Observation only: when neither pattern above matches but the phrase still ends "turn on/off",
   // log the likely stand-in word for "RaSh" so the accepted list above can be grown from real samples.
@@ -600,6 +794,7 @@
         console.log("[RaSh Voice] onresult:", i, "isFinal:", result.isFinal, "text:", JSON.stringify(text));
         if (!text) continue;
         wakeErrorStreak = 0;
+        if (WAKE_HEARD.test(text) || WAKE_ON.test(text) || WAKE_OFF.test(text)) markWakeHeard();
 
         // Only ignore repeats of THIS SAME utterance (same result index) — a later, different
         // utterance can still fire, without needing to wait for the recognizer to restart.
@@ -788,6 +983,8 @@
   let renderedIds = [];
   let busy = false;       // this tab is waiting for an answer (local only)
   let thinkingEl = null;  // "..." dots, local only
+  let heroMascot = null;       // the large mark above the greeting in the empty chat
+  let pendingReaction = null;  // how the mark reacts to the answer this tab is about to show
 
   // Streaming: a request id guards against a token from an old/aborted question landing after a
   // new one has started. The live bubble is local-only, exactly like the thinking dots it
@@ -808,6 +1005,8 @@
       streamingTextEl = el("div", "body", "");
       streamingEl.appendChild(streamingTextEl);
       answerEl.appendChild(streamingEl);
+      clearPeeks();
+      addPeek(streamingEl, "talking"); // the mouth moves only while words are actually streaming in
     }
     streamingTextEl.textContent += text;
     scrollToEnd();
@@ -838,22 +1037,192 @@
       .slice(-4);
   }
 
+  // ---------- While RaSh searches: a small prop and one honest line about what it is looking through ----------
+  // Picked from the question's wording and the route the widget is actually taking, set once (no fake progress).
+  // The row goes away when the answer starts streaming, or when the answer arrives.
+  const PROP_A = 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
+  const PROPS = { // fixed markup
+    files: '<path d="M3 18V6.5A1.5 1.5 0 0 1 4.5 5h4.2l1.8 2h9A1.5 1.5 0 0 1 21 8.5V18" ' + PROP_A + '/><rect class="pr-paper" x="6.5" y="6.5" width="11" height="8" rx="1" ' + PROP_A + '/>' +
+      '<path d="M2.6 10.5h18.8l-1.1 8.2a1.6 1.6 0 0 1-1.6 1.3H5.3a1.6 1.6 0 0 1-1.6-1.3z" style="fill:var(--rs-surface)" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+    video: '<rect x="3" y="5" width="18" height="14" rx="3" ' + PROP_A + '/><path class="pr-tri" d="M10 9.3v5.4l4.6-2.7z" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>',
+    email: '<rect class="pr-paper" x="6" y="3.5" width="12" height="10" rx="1" ' + PROP_A + '/><rect x="3" y="9" width="18" height="11" rx="2" style="fill:var(--rs-surface)" stroke="currentColor" stroke-width="1.8"/><path d="M3.6 10.2l8.4 5.6 8.4-5.6" ' + PROP_A + '/>',
+    order: '<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" ' + PROP_A + '/><path d="M3.5 3.5V7.5h4" ' + PROP_A + '/><g class="pr-hands"><path d="M12 12V7.5" ' + PROP_A + '/><path d="M12 12l3 1.8" ' + PROP_A + "/></g>",
+    window: '<rect x="3" y="5" width="18" height="16" rx="2" ' + PROP_A + '/><path d="M3 10h18M8 3v4M16 3v4" ' + PROP_A + '/><g class="pr-sheet"><path d="M7.5 14h3M7.5 17.5h6" ' + PROP_A + "/></g>",
+    site: '<circle cx="12" cy="12" r="9" ' + PROP_A + '/><path d="M3 12h18" ' + PROP_A + '/><ellipse class="pr-meridian" cx="12" cy="12" rx="4" ry="9" ' + PROP_A + "/>",
+    page: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" ' + PROP_A + '/><path d="M14 3v5h5M9 13h6M9 17h6" ' + PROP_A + '/><rect class="pr-scan" x="7.5" y="9.3" width="9" height="2" rx="1" fill="currentColor" opacity=".45"/>',
+    search: '<g class="pr-glass"><circle cx="10.5" cy="10.5" r="6" ' + PROP_A + '/><path d="M15 15l4.5 4.5" ' + PROP_A + "/></g>",
+  };
+  const FILE_WORDS = /\b(files?|pdfs?|docs?|documents?|attachments?|spreadsheets?|slides?|presentations?|uploads?)\b/i;
+  const VIDEO_WORDS = /\b(videos?|youtube|yt|watch(?:ed|ing)?|netflix|hotstar|vimeo|twitch)\b/i;
+  const EMAIL_WORDS = /\b(e-?mails?|gmail|inbox|mails?)\b/i;
+  // The site names the server itself understands (smart-recall.js SITES); YouTube and Netflix count as videos above
+  const SITE_NAMES = [
+    [/\b(wikipedia|wiki)\b/i, "Wikipedia"], [/\bgoogle\b/i, "Google"], [/\bgithub\b/i, "GitHub"], [/\breddit\b/i, "Reddit"],
+    [/\blinkedin\b/i, "LinkedIn"], [/\btwitter\b/i, "Twitter"], [/\bfacebook\b/i, "Facebook"], [/\b(instagram|insta)\b/i, "Instagram"],
+    [/\bamazon\b/i, "Amazon"], [/\bflipkart\b/i, "Flipkart"], [/\bstackoverflow\b/i, "Stack Overflow"], [/\bquora\b/i, "Quora"],
+    [/\bmedium\b/i, "Medium"], [/\bchatgpt\b/i, "ChatGPT"], [/\b(cricinfo|espncricinfo)\b/i, "ESPNcricinfo"],
+  ];
+  // Time windows the server's router understands (smart-recall.js parseWindow), with an optional part of the day
+  const MONTH_WORDS = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
+  const WEEKDAY_WORDS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const WINDOW_RE = new RegExp(
+    "\\b(?:(?:the\\s+)?day\\s+before\\s+yesterday|yesterday|today|tonight|last\\s+night|this\\s+(?:morning|afternoon|evening)" +
+    "|(?:\\d{1,2}|one|two|three|four|five|six|seven)\\s+days?\\s+ago" +
+    "|(?:the\\s+)?(?:past|last)\\s+(?:7|seven)\\s+days|(?:the\\s+)?(?:this\\s+)?past\\s+week" +
+    "|this\\s+week|last\\s+week|this\\s+month|last\\s+month" +
+    "|(?:(?:on|last|this)\\s+)?(?:" + WEEKDAY_WORDS.join("|") + ")" +
+    "|\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:" + MONTH_WORDS + ")|(?:" + MONTH_WORDS + ")\\s+\\d{1,2}(?:st|nd|rd|th)?" +
+    ")(?:\\s+(?:morning|afternoon|evening|night))?\\b", "i");
+
+  function searchActivity(q, route) {
+    if (route === "page" || route === "unclear") {
+      return ["page", isSummaryRequest(q) ? "Reading this page… this one takes a little longer" : "Reading this page…"];
+    }
+    if (isFileRequest(q) || isSavedFileList(q) || FILE_WORDS.test(q)) return ["files", "Digging through your files…"];
+    if (VIDEO_WORDS.test(q)) return ["video", "Checking what you watched…"];
+    if (EMAIL_WORDS.test(q)) return ["email", "Looking through your saved emails…"];
+    if (/\b(before|after)\b/i.test(q)) return ["order", "Rewinding your timeline…"];
+    const w = q.match(WINDOW_RE);
+    if (w) {
+      let named = w[0].replace(/\s+/g, " ").trim().replace(/^on /i, "");
+      if (/^(past|last (7|seven) days)/i.test(named)) named = "the " + named;
+      return ["window", "Flipping back to " + named + "…"];
+    }
+    const site = SITE_NAMES.find(([re]) => re.test(q));
+    if (site) return ["site", "Checking your " + site[1] + " pages…"];
+    return ["search", "Searching your memory…"];
+  }
+
+  let thinkingAct = null; // [prop, line] for the question being answered now
+  function fillThinking() {
+    const bub = thinkingEl && thinkingEl.querySelector(".thinkbub");
+    if (!bub || !thinkingAct) return;
+    bub.innerHTML = '<svg class="prop" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' + PROPS[thinkingAct[0]] + "</svg>"; // fixed markup
+    bub.appendChild(el("span", "", thinkingAct[1])); // textContent only
+  }
+  function thinkingActivity(prop, line) {
+    thinkingAct = [prop, line];
+    fillThinking();
+  }
+
   function showThinking() {
     removeThinking();
-    thinkingEl = el("div", "thinking");
-    thinkingEl.appendChild(el("i"));
-    thinkingEl.appendChild(el("i"));
-    thinkingEl.appendChild(el("i"));
+    clearPeeks(); // while searching, the searching row carries the mark
+    thinkingEl = el("div", "thinkrow");
+    const bub = el("div", "thinkbub");
+    bub.setAttribute("role", "status"); // read out once, politely
+    thinkingEl.appendChild(mascotNode(26, "thinking", { small: true }));
+    thinkingEl.appendChild(bub);
     answerEl.appendChild(thinkingEl);
+    fillThinking();
     scrollToEnd();
+  }
+
+  // ---------- After "not found": up to two follow-ups that the router handles ----------
+  // A question that named a time window gets the same question with the next wider window (today -> this week);
+  // otherwise, or as the second one, a general question. Each is checked against the widget's own routing so it
+  // goes to the memory search, never to page mode or live Gmail. Only for this tab's newest answer.
+  let followUpFor = "";
+  const WIDER_WINDOWS = ["this week", "in the past week", "this month"];
+  function windowBounds(phrase, now) {
+    const p = phrase.toLowerCase().replace(/\s+/g, " ").trim().replace(/^in /, "");
+    const day = (n) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + n).getTime();
+    const monday = -((now.getDay() + 6) % 7);
+    let m;
+    if (/^(today|tonight|this (morning|afternoon|evening))/.test(p)) return [day(0), day(1)];
+    if (/^(the )?day before yesterday/.test(p)) return [day(-2), day(-1)];
+    if (/^(yesterday|last night)/.test(p)) return [day(-1), day(0)];
+    if ((m = p.match(/^(\d{1,2}|one|two|three|four|five|six|seven) days? ago/))) {
+      const n = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 }[m[1]] || +m[1];
+      return [day(-n), day(-n + 1)];
+    }
+    if (/^(the )?(this )?past week|^(the )?(past|last) (7|seven) days/.test(p)) return [day(-7), day(1)];
+    if (/^this week/.test(p)) return [day(monday), day(1)];
+    if (/^last week/.test(p)) return [day(monday - 7), day(monday)];
+    if (/^this month/.test(p)) return [new Date(now.getFullYear(), now.getMonth(), 1).getTime(), day(1)];
+    if (/^last month/.test(p)) return [new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime(), new Date(now.getFullYear(), now.getMonth(), 1).getTime()];
+    if ((m = p.match(/^(?:(on|last|this) )?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)/))) {
+      const back = (now.getDay() - WEEKDAY_WORDS.indexOf(m[2]) + 7) % 7;
+      const d = back === 0 && m[1] !== "this" ? -7 : -back;
+      return [day(d), day(d + 1)];
+    }
+    return null; // a date like "12 Sep": no wider window offered
+  }
+  // Day < week < past week < month: a follow-up never steps down this order, even when the dates would allow it
+  // (early in a month "this week" covers more days than "this month", but it would read as narrower)
+  function windowRank(phrase) {
+    return /month/i.test(phrase) ? 3 : /past week|(7|seven) days/i.test(phrase) ? 2 : /week/i.test(phrase) ? 1 : 0;
+  }
+  function sameQuestion(a, b) {
+    const n = (x) => String(x).toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim();
+    return n(a) === n(b);
+  }
+  function routesToMemory(q) {
+    return !classifyInstantIntent(q) && !smallTalkKind(q) && !isGmailQuestion(q) && classifyQuestion(q) === "memory";
+  }
+  function followUpsFor(q) {
+    const out = [];
+    const add = (ic, text) => {
+      if (out.length < 2 && text && !sameQuestion(text, q) && !out.some((x) => sameQuestion(x[1], text)) && routesToMemory(text)) out.push([ic, text]);
+    };
+    const w = q.match(WINDOW_RE);
+    if (w) {
+      const now = new Date();
+      const asked = windowBounds(w[0], now);
+      if (asked) {
+        for (const wider of WIDER_WINDOWS) {
+          const b = windowBounds(wider, now);
+          if (windowRank(wider) <= windowRank(w[0])) continue;
+          if (!b || b[0] > asked[0] || b[1] < asked[1] || b[1] - b[0] <= asked[1] - asked[0]) continue;
+          const text = q.replace(w[0], wider).replace(/\s+/g, " ").trim();
+          if (routesToMemory(text)) { add("calendar", text); break; }
+        }
+      }
+    } else if (isFileRequest(q) || isSavedFileList(q) || FILE_WORDS.test(q)) add("doc", "Show my last 3 files");
+    else if (VIDEO_WORDS.test(q)) add("play", "What did I watch this week?");
+    add("clock", "What did I read today?");
+    add("calendar", "What did I read this week?");
+    return out;
+  }
+  function placeFollowUps() {
+    const old = answerEl.querySelector(":scope > .follow");
+    if (old) old.remove();
+    const last = history[history.length - 1];
+    if (!followUpFor || busy || !last || last.role !== "note" || last.kind === "error") return;
+    const list = followUpsFor(followUpFor);
+    if (!list.length) return;
+    const box = el("div", "follow");
+    box.appendChild(el("span", "fl", "You could try"));
+    list.forEach(([ic, text]) => {
+      const c = el("button", "chip sm");
+      c.type = "button";
+      c.setAttribute("aria-label", "Ask: " + text);
+      const ci = el("span", "ci");
+      ci.innerHTML = icon(ic, 13); // fixed inline SVG
+      const ca = el("span", "ca");
+      ca.innerHTML = icon("arrow", 13);
+      c.appendChild(ci);
+      c.appendChild(el("span", "ct", text));
+      c.appendChild(ca);
+      c.addEventListener("click", () => { input.value = text; submitQuestion(); });
+      box.appendChild(c);
+    });
+    answerEl.appendChild(box);
+  }
+  function isNotFoundResult(res) {
+    const d = res && res.ok && res.kind !== "file" ? res.data : null;
+    return !!(d && d.found === false && !d.error);
   }
 
   function messageNode(m) {
     if (m.role === "user") return el("div", "me", m.text || "");
-    if (m.role === "files") return fileCard(m.items || []);
-    if (m.role === "answer") return answerCard(m);
-    if (m.role === "note" && m.text === NOT_FOUND_TEXT) return notFoundCard(m.text);
-    return el("div", "card " + (m.kind === "error" ? "error" : "muted"), m.text || "");
+    let node;
+    if (m.role === "files") node = fileCard(m.items || []);
+    else if (m.role === "answer") node = answerCard(m);
+    else if (m.role === "note" && m.text === NOT_FOUND_TEXT) node = notFoundCard(m.text);
+    else node = el("div", "card " + (m.kind === "error" ? "error" : "muted"), m.text || "");
+    node.dataset.rest = restingState(m); // the state the avatar keeps on this message while it is the newest
+    return node;
   }
 
   function renderHistory(list) {
@@ -876,6 +1245,8 @@
         renderedIds.push(m.id);
       });
     }
+    placeAvatar();
+    placeFollowUps();
     if (busy) showThinking();
     clearBtn.hidden = history.length === 0;
     scrollToEnd();
@@ -892,13 +1263,17 @@
     }
   }
 
-  function addToHistory(items, done) {
+  function addToHistory(items, done, reaction) {
+    const r = reaction || reactionFor(items);
+    if (r) pendingReaction = r;
     safeSend({ type: "RASH_CHAT_APPEND", items: items }, (ack) => {
       if (!ack || !ack.ok) {
         // Could not save (for example the extension was reloaded): still show it in this tab
         const empty = answerEl.querySelector(".empty");
         if (empty) empty.remove();
         items.forEach((m) => answerEl.appendChild(messageNode(m)));
+        placeAvatar();
+        placeFollowUps();
         scrollToEnd();
       }
       if (done) done();
@@ -927,24 +1302,270 @@
     safeSend({ type: "RASH_CHAT_CLEAR" });
   });
 
-  const SUGGESTIONS = [
-    "What was the last article I read?",
-    "Find my resume file",
-    "Summarize my last page"
+  // ---------- Greeting: changes with the laptop's clock, rotates on every open ----------
+  const GREETINGS = {
+    morning: [
+      "Morning! What should I dig up for you?",
+      "Good morning. What are we looking for today?",
+      "Fresh start. Need something from yesterday?",
+      "Coffee in one hand, a half-remembered page in the other?"
+    ],
+    afternoon: [
+      "Afternoon! What can I find for you?",
+      "Lost a tab somewhere? Let's track it down.",
+      "Good afternoon. What should I pull up from your memory?",
+      "Midday check-in: what do you need to find?"
+    ],
+    evening: [
+      "Evening! Need something from earlier today?",
+      "Winding down? I can recap your day.",
+      "Good evening. What should I find?",
+      "That thing you read earlier? Let's find it."
+    ],
+    night: [
+      "Burning the midnight oil? Ask me anything you've seen.",
+      "Night owl mode. What are we finding?",
+      "Up late? I'll keep it quick.",
+      "Quiet hours, sharp memory. What did you lose track of?"
+    ],
+    any: [
+      "Hey! I remember what you read, so you don't have to.",
+      "Ask away. If you've seen it, I can probably find it."
+    ]
+  };
+  // The optional email digest goes out through Gmail, so no line promises that nothing ever leaves the laptop.
+  const SUBTITLES = [
+    "Pages, files and emails you've seen, kept on this laptop.",
+    "I search the pages, files and emails you've saved, right here on this laptop.",
+    "Anything you've read or saved, answered by a local AI on this laptop.",
+    "Your pages, files and emails, stored and searched on this laptop."
   ];
+  function dayPart(hour) {
+    if (hour >= 5 && hour < 12) return "morning";
+    if (hour >= 12 && hour < 17) return "afternoon";
+    if (hour >= 17 && hour < 22) return "evening";
+    return "night";
+  }
+  function pick(list, n) { return list[((n % list.length) + list.length) % list.length]; }
+
+  // ---------- Site-aware suggestions (from the page address only, no server calls) ----------
+  // Watch questions appear only on video sites, worded "today" / "this week" (those usually include the
+  // video you're on); elsewhere a "watch" question with no videos in its window is simply not found.
+  // Each one was checked end to end (this widget's routing, then a RaSh server on the eval fixtures, and
+  // on real data): it reaches memory and answers well when there is data for it. While RaSh is ON the page
+  // you're on is saved about 4 s after it loads, so "what was the last ..." would just answer with this page;
+  // lists and time windows are used instead. "The last article I read" stays on search engines only:
+  // results pages are skipped for reading questions, so it finds the page before the search.
+  // "Summarize this page" is not offered as a chip (a whole-page summary takes the local model ~25 s),
+  // but it still works when typed.
+  const S = (q, i) => ({ q: q, i: i });
+  const SUGGEST = {
+    search: [S("What was the last article I read?", "doc"), S("What did I read today?", "clock")],
+    video: [S("What did I watch today?", "play"), S("What did I watch this week?", "play")], // usually include the video you're on
+    wiki: [S("What did I read on Wikipedia this week?", "doc"), S("What did I read today?", "clock")],
+    code: [S("Show my last 3 files", "file"), S("What did I read today?", "clock")],
+    study: [S("Show my last 3 files", "file"), S("Show my last 3 PDFs", "file")],
+    email: [S("What emails did I save this week?", "mail"), S("What did I save this week?", "calendar")],
+    shop: [S("What did I save today?", "clock")],
+    read: [S("What did I read today?", "clock"), S("What did I read yesterday?", "calendar")],
+    any: []
+  };
+  const SITE_EXTRA = { // a site's own suggestion; "drop" removes a near-duplicate
+    google: { s: S("What did I google today?", "search") },
+    youtube: { s: S("What did I watch on YouTube this week?", "play"), drop: "What did I watch this week?" }
+  };
+  const GENERIC = [
+    S("What did I read today?", "clock"), S("What did I do yesterday?", "calendar"), S("Show my last 3 files", "file"),
+    S("What did I read yesterday?", "calendar"), S("What did I read this week?", "calendar"), S("What did I save this week?", "calendar")
+  ];
+  const HINTS = [
+    "Try: what did I read this week?", "Try: show my last 3 files", "Try: what did I do yesterday?",
+    "Ask about anything you've read..."
+  ];
+  const SITE_HINTS = {
+    search: "Try: what was the last article I read?", video: "Try: what did I watch today?",
+    wiki: "Try: what did I read on Wikipedia this week?", email: "Try: what emails did I save this week?"
+  };
+
+  function siteKind(hostname) {
+    const h = String(hostname || "").toLowerCase().replace(/^www\./, "");
+    if (/^mail\.google\.com$|^outlook\.(live|office|office365)\.com$/.test(h)) return { kind: "email", site: "" };
+    if (/^(docs|drive|classroom)\.google\.com$|(^|\.)notion\.(so|site)$|(^|\.)(coursera\.org|khanacademy\.org)$|\.edu(\.[a-z]{2})?$|\.ac\.[a-z]{2}$/.test(h)) return { kind: "study", site: "" };
+    if (/^google\.[a-z.]+$/.test(h)) return { kind: "search", site: "google" };
+    if (/^(bing\.com|duckduckgo\.com|search\.yahoo\.com|ecosia\.org|search\.brave\.com)$/.test(h)) return { kind: "search", site: "" };
+    if (/(^|\.)(youtube\.com|youtu\.be)$/.test(h)) return { kind: "video", site: "youtube" };
+    if (/(^|\.)(vimeo\.com|twitch\.tv|netflix\.com|primevideo\.com|hotstar\.com|jiocinema\.com|dailymotion\.com)$/.test(h)) return { kind: "video", site: "" };
+    if (/(^|\.)wikipedia\.org$/.test(h)) return { kind: "wiki", site: "" };
+    if (/^github\.com$/.test(h)) return { kind: "code", site: "github" };
+    if (/(^|\.)(gitlab\.com|stackoverflow\.com|stackexchange\.com|developer\.mozilla\.org)$/.test(h)) return { kind: "code", site: "" };
+    if (/(^|\.)amazon\.[a-z.]+$/.test(h)) return { kind: "shop", site: "amazon" };
+    if (/(^|\.)(flipkart\.com|myntra\.com|ebay\.[a-z.]+)$/.test(h)) return { kind: "shop", site: "" };
+    if (/(^|\.)(medium\.com|substack\.com|nytimes\.com|bbc\.com|bbc\.co\.uk|theguardian\.com|thehindu\.com|indiatimes\.com|ndtv\.com|hindustantimes\.com)$/.test(h)) return { kind: "read", site: "" };
+    return { kind: "any", site: "" };
+  }
+
+  // Three suggestions: two of the site's own (rotating) plus general ones, or three general ones
+  function suggestionsFor(where, n) {
+    const extra = where.site ? SITE_EXTRA[where.site] : null;
+    const drop = (x) => !(extra && extra.drop === x.q);
+    const own = (extra ? [extra.s] : []).concat(SUGGEST[where.kind] || []).filter(drop);
+    const generic = GENERIC.filter((g) => drop(g) && !own.some((o) => o.q === g.q));
+    const out = [];
+    const add = (x) => { if (x && !out.some((o) => o.q === x.q)) out.push(x); };
+    if (own.length) { add(pick(own, n)); add(pick(own, n + 1)); }
+    for (let i = 0; out.length < 3 && i < generic.length + own.length; i++) add(pick(generic, n * 2 + i));
+    return out.slice(0, 3);
+  }
+  // The placeholder never repeats a suggestion that is already on screen, even in other words
+  function hintTopic(text) {
+    const m = String(text).toLowerCase().match(/last night|article|files|pdfs|wikipedia|emails|google|youtube|yesterday|today|this week/);
+    return m ? m[0] : String(text).toLowerCase();
+  }
+  function placeholderFor(where, n, shown) {
+    const onScreen = new Set(shown.map((x) => hintTopic(x.q)));
+    const list = [SITE_HINTS[where.kind]].concat(HINTS)
+      .filter((h, i, a) => h && a.indexOf(h) === i && !onScreen.has(hintTopic(h)));
+    return pick(list, n);
+  }
+
+  let greetTurn = Math.floor(Math.random() * 12); // each page starts at a different point in the rotation
 
   function showEmptyState() {
+    const where = siteKind(location.hostname);
+    const shown = suggestionsFor(where, greetTurn);
     const box = el("div", "empty");
-    box.appendChild(el("div", "big", "What do you want to remember?"));
-    box.appendChild(el("div", "", "Ask about pages you've read or files on this laptop."));
+    const hero = el("div", "hero");
+    heroMascot = mascotNode(56, listening ? "listening" : "idle");
+    hero.appendChild(heroMascot);
+    const big = el("div", "big", pick(GREETINGS[dayPart(new Date().getHours())].concat(GREETINGS.any), greetTurn));
+    big.setAttribute("role", "heading");
+    big.setAttribute("aria-level", "2");
+    box.appendChild(hero);
+    box.appendChild(big);
+    box.appendChild(el("div", "lede", pick(SUBTITLES, greetTurn)));
     const chips = el("div", "chips");
-    SUGGESTIONS.forEach((s) => {
-      const c = el("button", "chip", s);
-      c.addEventListener("click", () => { input.value = s; submitQuestion(); });
+    shown.forEach((x) => {
+      const c = el("button", "chip");
+      c.type = "button";
+      c.setAttribute("aria-label", "Ask: " + x.q);
+      const ci = el("span", "ci");
+      ci.innerHTML = icon(x.i, 14); // fixed inline SVG
+      const ca = el("span", "ca");
+      ca.innerHTML = icon("arrow", 14);
+      c.appendChild(ci);
+      c.appendChild(el("span", "ct", x.q));
+      c.appendChild(ca);
+      c.addEventListener("click", () => { input.value = x.q; submitQuestion(); });
       chips.appendChild(c);
     });
     box.appendChild(chips);
     answerEl.appendChild(box);
+    input.placeholder = placeholderFor(where, greetTurn, shown);
+  }
+
+  // ---------- Which mark reacts, and how ----------
+  // The empty-chat mark when it's showing, otherwise the header badge
+  function primaryMascot() {
+    return heroMascot && heroMascot.isConnected ? heroMascot : headerMascot;
+  }
+
+  // Messages keep a resting state for the avatar: not found and "AI engine not responding" stay dim until a
+  // newer answer arrives, everything else rests at idle.
+  const NOT_FOUND_LIKE = /^(I couldn't find that in your memory\.|I could not find that\.|I couldn't answer from this file\.|No emails found)/;
+  function restingState(m) {
+    const t = String((m.role === "answer" ? m.answer : m.text) || "");
+    if (m.role === "answer" && t === AI_DOWN_TEXT) return "offline";
+    if (m.role === "note" && m.kind === "error" && /^Can't reach the RaSh server/.test(t)) return "offline";
+    if (NOT_FOUND_LIKE.test(t)) return "notfound";
+    return "idle";
+  }
+  // The reaction when this tab gets its answer: sources (lists, files, time-order...) = happy,
+  // an answer without sources (time, page summary) = a quick flash too, otherwise the resting state.
+  function reactionFor(items) {
+    const last = (items || []).filter((m) => m && m.role !== "user").pop();
+    if (!last) return null;
+    const rest = restingState(last);
+    if (rest !== "idle") return rest;
+    if (last.role === "files") return "happy";
+    if (last.role === "answer") return Array.isArray(last.sources) && last.sources.length ? "happy" : "smile";
+    if (last.role === "note" && last.kind !== "error") {
+      if (/^Showed your/.test(last.text || "")) return "happy";
+      if (/^Saved "/.test(last.text || "")) return "smile";
+    }
+    return "idle";
+  }
+
+  // The small avatar lives on the thinking row, or on the newest answer only
+  function clearPeeks(except) {
+    answerEl.querySelectorAll(".peek").forEach((p) => { if (p.parentNode !== except) p.remove(); });
+  }
+  function addPeek(card, state) {
+    let peek = card.querySelector(":scope > .peek");
+    if (peek) { setMascot(peek.firstChild, state); return; }
+    peek = el("span", "peek");
+    peek.appendChild(mascotNode(26, state, { small: true }));
+    card.appendChild(peek);
+  }
+  function placeAvatar() {
+    if (busy) { clearPeeks(); return; } // the thinking row carries it
+    const cards = answerEl.querySelectorAll(":scope > .card");
+    const target = cards[cards.length - 1];
+    clearPeeks(target || null);
+    if (!target) return;
+    const reaction = pendingReaction;
+    pendingReaction = null;
+    if (reaction) addPeek(target, reaction);
+    else if (!target.querySelector(":scope > .peek")) addPeek(target, target.dataset.rest || "idle");
+  }
+
+  // Listening: the push-to-talk mic, or "Hey RaSh" just heard
+  let wakeHeard = false;
+  let wakeHeardTimer = null;
+  function markWakeHeard() {
+    wakeHeard = true;
+    clearTimeout(wakeHeardTimer);
+    wakeHeardTimer = setTimeout(() => { wakeHeard = false; syncListening(); }, 2500);
+    syncListening();
+  }
+  function syncListening() {
+    const on = listening || wakeHeard;
+    [headerMascot, heroMascot].forEach((m) => {
+      if (!m || (m !== headerMascot && !m.isConnected)) return;
+      const st = mascotState(m);
+      if (on && st !== "listening") setMascot(m, "listening");
+      else if (!on && st === "listening") setMascot(m, "idle");
+    });
+    // The side tab shows "Hey RaSh" was heard (a reaction: at most one every 30 s, never over paused/sleepy)
+    if (wakeHeard && mascotState(dockMascot) !== "listening") dockReact("listening");
+    else if (!wakeHeard && mascotState(dockMascot) === "listening") setMascot(dockMascot, dockState());
+  }
+
+  // ---------- Small talk: a greeting, thanks or goodbye on its own (at most 4 words) ----------
+  const SMALL_TALK_LABEL = "RaSh";
+  const SMALL_TALK = {
+    hello: /^(hi+|hey+|hello+|hiya|heya|yo|howdy|namaste|hi there|hey there|hello there|good (morning|afternoon|evening|day))$/,
+    thanks: /^(thanks?|thank (you|u)|thanks (a lot|so much)|thank you (so|very) much|many thanks|thx|ty|tysm|cheers|(ok|okay|great|cool|nice|awesome) (thanks?|thank you))$/,
+    bye: /^(bye+|bye bye|goodbye|good bye|good night|gn|see (you|ya)|see you (later|soon|tomorrow)|cya|later|take care)$/
+  };
+  const SMALL_TALK_REPLIES = {
+    hello: ["Hey! What should I find?", "Hi. Ask me about anything you've seen.", "Hello! What are we looking for?"],
+    thanks: ["Anytime. Ask me whenever something slips your mind.", "You're welcome. Ask whenever you need something back.", "No problem. I'm right here in the side tab."],
+    byeOn: ["See you. I'll keep saving pages while RaSh is ON.", "Bye for now. I'll keep saving pages while RaSh is ON."],
+    byeOff: ["See you. RaSh is paused, so nothing new is being saved.", "Bye for now. Turn RaSh ON whenever you want pages saved."]
+  };
+  const smallTalkTurn = {};
+  function smallTalkKind(q) {
+    const t = String(q || "").toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+    if (!t || t.split(" ").length > 4) return null;
+    const core = t.replace(/^rash\s+/, "").replace(/\s+rash$/, ""); // "thanks rash", "hey rash"
+    for (const k of Object.keys(SMALL_TALK)) if (SMALL_TALK[k].test(core)) return k;
+    return null;
+  }
+  function smallTalkReply(kind) {
+    const key = kind === "bye" ? (enabled ? "byeOn" : "byeOff") : kind;
+    const list = SMALL_TALK_REPLIES[key];
+    smallTalkTurn[key] = (smallTalkTurn[key] || 0) + 1;
+    return list[smallTalkTurn[key] % list.length];
   }
 
   function lastFolderName(folderPath) {
@@ -1155,6 +1776,8 @@
       if (d.answer === AI_DOWN_TEXT) card.classList.add("calm");
       card.appendChild(answerBody(d.answer, byN));
       card.appendChild(block);
+    } else if (d.source_label === SMALL_TALK_LABEL) {
+      card.appendChild(el("div", "body", d.answer || "")); // a reply to "hi" / "thanks" / "bye": nothing to cite
     } else if (d.source_label) {
       // New style: one short answer, then a small line saying where it came from
       card.appendChild(el("div", "body", d.answer || "I could not find that."));
@@ -1189,10 +1812,14 @@
         if (busy) return;
         more.disabled = true;
         busy = true;
+        thinkingAct = null;
+        followUpFor = "";
         showThinking();
+        thinkingActivity(...searchActivity(d.question, "memory"));
         safeSend({ type: "RASH_QUERY", question: d.question, mode: "memory-only", history: recentHistoryForServer() }, (res) => {
           busy = false;
           removeThinking();
+          if (isNotFoundResult(res)) followUpFor = d.question;
           addToHistory(resultToItems(res));
         });
       });
@@ -1327,8 +1954,18 @@
       /\b(find|where|locate|open|give me|show me|send me)\b/i.test(q);
   }
 
+  // "show my last 3 files", "my latest PDFs", "the files I saved": a list of what RaSh has saved. Without
+  // this, such questions fell through to "unclear" (neither recall words nor "find/where/show me"), which
+  // answers from the page behind the panel. They now go to the server's file/recency route, the same one
+  // npm run eval asks, and skip the laptop-wide file finder (see runQuery). A question that points at the
+  // page itself ("the last line of this document") still stays with the page.
+  const POINTS_AT_PAGE = /\b(this|these|current)\s+(page|pdf|doc|document|file|article|site|tab)\b/i;
+  function isSavedFileList(q) {
+    return isFileRecallPhrase(q) && !POINTS_AT_PAGE.test(q);
+  }
+
   function classifyQuestion(q) {
-    if (RECALL_WORDS.test(q) || isFileRequest(q)) return "memory"; // saved memory (and the file finder), as before
+    if (RECALL_WORDS.test(q) || isFileRequest(q) || isSavedFileList(q)) return "memory"; // saved memory (and the file finder)
     return PAGE_WORDS.test(q) ? "page" : "unclear";
   }
 
@@ -1640,6 +2277,7 @@
     const empty = answerEl.querySelector(".empty");
     if (empty) empty.remove();
     answerEl.appendChild(node);
+    placeAvatar();
     scrollToEnd();
   }
 
@@ -1659,6 +2297,7 @@
           card.remove(); // the question is about to be answered properly, so drop the prompt
           if (retryQuestion) {
             busy = true;
+            thinkingAct = ["email", "Checking your Gmail…"];
             showThinking();
             runGmailQuery(retryQuestion);
           }
@@ -1724,6 +2363,25 @@
     settingsEl.setAttribute("role", "dialog");
     settingsEl.setAttribute("aria-label", "RaSh options");
     settingsEl.appendChild(el("div", "ctext", "Options"));
+
+    // "Animated character": when off, RaSh's mark still shows its state but nothing moves (like reduced motion)
+    const animRow = el("div", "setrow");
+    animRow.appendChild(el("span", "", "Animated character"));
+    const animSwitch = el("button", "switch" + (characterAnimated ? " on" : ""));
+    animSwitch.type = "button";
+    animSwitch.setAttribute("role", "switch");
+    animSwitch.setAttribute("aria-checked", characterAnimated ? "true" : "false");
+    animSwitch.setAttribute("aria-label", "Animated character");
+    animSwitch.title = "When off, RaSh's icon still shows what it's doing but doesn't move";
+    animSwitch.addEventListener("click", () => {
+      const next = !characterAnimated;
+      applyCharacterAnimated(next);
+      animSwitch.classList.toggle("on", next);
+      animSwitch.setAttribute("aria-checked", next ? "true" : "false");
+      try { chrome.storage.local.set({ [CHARACTER_KEY]: next }); } catch (e) {}
+    });
+    animRow.appendChild(animSwitch);
+    settingsEl.appendChild(animRow);
 
     const line = el("div", "fpath", "Checking Gmail...");
     settingsEl.appendChild(line);
@@ -2023,7 +2681,21 @@
       return;
     }
 
+    // "hi", "thanks", "bye" on their own: answered right here, no server call, so they never get
+    // "I couldn't find that in your memory". Anything longer or with a real question goes on as usual.
+    const talk = smallTalkKind(q);
+    if (talk) {
+      console.log("[RaSh] route: small talk |", JSON.stringify(q));
+      addToHistory([
+        { role: "user", text: q },
+        { role: "answer", kind: "answer", title: "", answer: smallTalkReply(talk), source_url: "", last_updated: "", source_label: SMALL_TALK_LABEL },
+      ], null, talk === "thanks" ? "happy" : "greet");
+      return;
+    }
+
     busy = true;
+    thinkingAct = null;
+    followUpFor = "";
     showThinking();
 
     const attachment = pendingAttachment;
@@ -2031,6 +2703,7 @@
     // Saving consumes the attachment, as before. Asking about it does not: it stays active so
     // follow-up questions about the same file work without attaching it again.
     if (attachment && SAVE_INTENT.test(q)) {
+      thinkingActivity("files", "Saving your file…");
       pendingAttachment = null;
       updateAttachChip();
       addToHistory([{ role: "user", text: q }], () => saveAttachedFile(attachment));
@@ -2039,6 +2712,7 @@
 
     // Asking about the inbox goes to Gmail, live, before any page or memory search
     if (isGmailQuestion(q)) {
+      thinkingActivity("email", "Checking your Gmail…");
       console.log("[RaSh] route: gmail |", JSON.stringify(q));
       addToHistory([{ role: "user", text: q }], () => runGmailQuery(q));
       return;
@@ -2047,6 +2721,7 @@
     // A file is attached: answer about it, unless the wording is clearly about saved memories
     // ("what did I read yesterday", "what PDF did I save"), which should still reach memory.
     if (attachment && isAboutAttachment(q)) {
+      thinkingActivity("page", "Reading your attached file…");
       console.log("[RaSh] route: attached-file |", JSON.stringify(q));
       addToHistory([{ role: "user", text: q }], () => answerFromFile(q, attachment));
       return;
@@ -2057,6 +2732,7 @@
     // saved"), so it goes to memory - never to page mode, which would read the web page behind
     // the panel and answer from something the user isn't even asking about.
     const mode = attachment ? "memory" : classifyQuestion(q);
+    thinkingActivity(...searchActivity(q, mode));
     console.log("[RaSh] route:", mode, "|", JSON.stringify(q));
     addToHistory([{ role: "user", text: q }], () => runQuery(q, mode));
   }
@@ -2067,11 +2743,17 @@
     if (mode === "memory") {
       const requestId = ++streamRequestSeq;
       activeStreamRequestId = requestId;
+      const message = { type: "RASH_QUERY", question: q, history: recentHistoryForServer(), requestId: requestId };
+      // A list of saved files is answered from RaSh's records, not by searching the whole laptop
+      // ("memory-only" is the existing flag that skips the file finder in background.js)
+      if (isSavedFileList(q)) message.mode = "memory-only";
       safeSend(
-        { type: "RASH_QUERY", question: q, history: recentHistoryForServer(), requestId: requestId },
+        message,
         (res) => {
+          noteServerResult(res);
           if (activeStreamRequestId === requestId) activeStreamRequestId = null;
           removeStreamingAnswer();
+          if (isNotFoundResult(res)) followUpFor = q;
           done(resultToItems(res));
         }
       );
@@ -2096,6 +2778,7 @@
     safeSend(
       { type: "RASH_QUERY", question: q, mode: "page", page: { title: document.title || "", url: location.href, text: text, summary: summaryIntent }, history: recentHistoryForServer() },
       (res) => {
+        noteServerResult(res);
         // Only a server that confirms it answered from the page may answer; an old server would search memory
         const d = res && res.data;
         if (res && res.ok && d && !d.error && d.source !== "page") {
@@ -2230,8 +2913,11 @@
     safeSend(
       { type: "RASH_CAPTURE", title: payload.title, content: payload.content, confirmed: confirmed === true, is_sensitive: vault === true },
       (res) => {
-        if (res && res.ok) showToast("RaSh saved: " + (document.title || location.hostname).trim().slice(0, 60));
-        else if (res && res.reason === "private") setStatus("Not saved: private site");
+        noteServerResult(res);
+        if (res && res.ok) {
+          showToast("RaSh saved: " + (document.title || location.hostname).trim().slice(0, 60));
+          if (nodHref !== location.href && dockReact("nod")) nodHref = location.href; // one small nod, at most once per page
+        } else if (res && res.reason === "private") setStatus("Not saved: private site");
         else if (res && res.reason === "off") setStatus("RaSh is OFF");
         else setStatus("Server not reachable");
       }
@@ -2585,22 +3271,23 @@
     bannerShadow.innerHTML = `
       <style>
         :host { all: initial; }
+${THEME_CSS}
         * { box-sizing: border-box; }
         .bar {
           display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-          font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-          font-size: 13px; color: #F2F2F4; padding: 10px 14px; border-radius: 10px;
-          background: rgba(17,17,20,0.94); border: 1px solid rgba(255,255,255,0.1);
+          font-family: ${FONT_STACK};
+          font-size: 13px; color: var(--rs-text); padding: 10px 14px; border-radius: 12px;
+          background: var(--rs-bg); box-shadow: var(--rs-tab-shadow), inset 0 0 0 1.5px var(--rs-tab-ring);
         }
         .msg { flex: 1; min-width: 160px; }
         button {
-          all: unset; cursor: pointer; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 500;
+          all: unset; cursor: pointer; padding: 6px 12px; border-radius: 10px; font-size: 12px; font-weight: 600;
           font-family: inherit;
         }
-        .fill { background: #F2F2F4; color: #111114; }
-        .fill:hover { background: #fff; }
-        .dismiss { color: #C9C9D1; border: 1px solid rgba(255,255,255,0.14); }
-        .dismiss:hover { background: rgba(255,255,255,0.06); }
+        button:focus-visible { outline: 2px solid var(--rs-accent); outline-offset: 2px; }
+        .fill { background: var(--rs-accent); color: var(--rs-on-accent); }
+        .dismiss { color: var(--rs-text); box-shadow: inset 0 0 0 1px var(--rs-line); }
+        .dismiss:hover { background: var(--rs-surface2); }
       </style>
       <div class="bar" role="dialog" aria-label="RaSh autofill">
         <span class="msg">RaSh can fill ${plan.length} field${plan.length === 1 ? "" : "s"} — Autofill?</span>
@@ -2762,11 +3449,13 @@
         const at = (changes.rashEnabledAt && changes.rashEnabledAt.newValue) || 0;
         if (at >= lastEnabledChangeAt) {
           lastEnabledChangeAt = at;
+          stateKnown = true;
           enabled = changes.rashEnabled.newValue === true;
           render();
         } // else: a delayed echo of an older change this tab has already moved past — ignore it
       }
       if (changes[CHAT_KEY]) renderHistory(changes[CHAT_KEY].newValue);
+      if (changes[CHARACTER_KEY]) applyCharacterAnimated(changes[CHARACTER_KEY].newValue);
       if (SpeechRecognitionCtor && changes[WAKE_ENABLED_KEY]) {
         const on = changes[WAKE_ENABLED_KEY].newValue === true;
         setWakeToggleUI(on);
@@ -2777,6 +3466,7 @@
   } catch (e) {}
 
   safeSend({ type: "RASH_GET_STATE" }, (res) => {
+    stateKnown = true;
     enabled = !!(res && res.enabled);
     render();
     // If already ON, capture this page shortly after it loads
